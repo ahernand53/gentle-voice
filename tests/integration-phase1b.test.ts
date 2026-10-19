@@ -17,14 +17,10 @@ import { PREFERRED_SHORTCUT, PREFERRED_SHORTCUT_LABEL, RECOMMENDED_STT, RECOMMEN
 import { allowlistShortcutProbe, deniedShortcutProbe, maybeRegisterVoiceShortcut } from "../lib/shortcut.ts";
 import { VOICE_COMMAND } from "../lib/commands.ts";
 import { DEFAULT_VOICE_CONFIG } from "../lib/config.ts";
-import { appendFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
-
-const LAB_LOG = "/home/erickfm/D-SSD/personal/gs-lab/logs/phase1b-access.log";
+import { appendLabLog, skipWithoutLab } from "./lab-env.ts";
 
 async function labLog(line: string): Promise<void> {
-	await mkdir("/home/erickfm/D-SSD/personal/gs-lab/logs", { recursive: true });
-	await appendFile(LAB_LOG, `${new Date().toISOString()} ${line}\n`);
+	await appendLabLog("phase1b-access.log", line);
 }
 
 test("Pi harness: /gentle:voice registers and runs subcommands without LLM", async () => {
@@ -84,7 +80,7 @@ test("Pi KeyId ctrl+alt+space registers only when probe allows", async () => {
 	assert.equal(PREFERRED_SHORTCUT_LABEL, "Ctrl+Alt+Space");
 });
 
-test("real filesystem probe: Piper + Voxtype ggml (Linux/CachyOS lab)", async () => {
+test("real filesystem probe: Piper + Voxtype ggml (Linux/CachyOS lab)", { skip: skipWithoutLab }, async () => {
 	const probe = createFilesystemEngineProbe({
 		home: "/home/erickfm",
 		modelRoots: [
@@ -124,7 +120,7 @@ test("real filesystem probe: Piper + Voxtype ggml (Linux/CachyOS lab)", async ()
 	assert.equal(operationalLabel(piper), "adapter_ready");
 });
 
-test("shortcut conflict scan is read-only and fail-closed", async () => {
+test("shortcut conflict scan is read-only and fail-closed", { skip: skipWithoutLab }, async () => {
 	const evidence = await collectShortcutConflictEvidence({ home: "/home/erickfm" });
 	assert.equal(evidence.preferredKeyId, "ctrl+alt+space");
 	assert.equal(evidence.piKeyIdValid, true);

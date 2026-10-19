@@ -3,6 +3,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { skipWithoutLab } from "./lab-env.ts";
 import { access, constants, mkdir, readdir, writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -27,7 +28,7 @@ import {
 import { AbortError } from "../lib/process-cancel.ts";
 import { preferredCaptureBackends, isAudioBackendImplemented } from "../lib/adapters/audio-backends.ts";
 
-test("real: whisper-cli installed under WD-Black with voxtype model reusable", async () => {
+test("real: whisper-cli installed under WD-Black with voxtype model reusable", { skip: skipWithoutLab }, async () => {
 	await access(LAB_WHISPER_CLI_CANDIDATE, constants.X_OK);
 	const magic = await readGgmlMagic(LAB_VOXTYPE_GGML_SMALL);
 	assert.ok(magic);
@@ -42,7 +43,7 @@ test("real: whisper-cli installed under WD-Black with voxtype model reusable", a
 	assert.equal(avail.status, "ready");
 });
 
-test("real: whisper rejects empty audio and invalid wav", async () => {
+test("real: whisper rejects empty audio and invalid wav", { skip: skipWithoutLab }, async () => {
 	const stt = createWhisperSttAdapter({
 		whisperCliPath: LAB_WHISPER_CLI_CANDIDATE,
 		modelPath: LAB_VOXTYPE_GGML_SMALL,
@@ -70,7 +71,7 @@ test("real: whisper rejects empty audio and invalid wav", async () => {
 	);
 });
 
-test("real: whisper missing model path → unavailable", async () => {
+test("real: whisper missing model path → unavailable", { skip: skipWithoutLab }, async () => {
 	const stt = createWhisperSttAdapter({
 		whisperCliPath: LAB_WHISPER_CLI_CANDIDATE,
 		modelPath: "/tmp/no-such-ggml-model.bin",
@@ -81,7 +82,7 @@ test("real: whisper missing model path → unavailable", async () => {
 	assert.equal(avail.reason, "model_missing");
 });
 
-test("real: whisper transcribes short silence wav (blank → empty text)", async () => {
+test("real: whisper transcribes short silence wav (blank → empty text)", { skip: skipWithoutLab }, async () => {
 	const pcm = new Uint8Array(16_000 * 2); // 1s silence mono s16
 	const wav = pcmS16leToWav(pcm, 16_000, 1);
 	assert.equal(isWavBuffer(wav), true);
@@ -108,7 +109,7 @@ test("real: whisper transcribes short silence wav (blank → empty text)", async
 	assert.ok(ms < 120_000);
 });
 
-test("real: pipewire capture availability on this Linux lab", async () => {
+test("real: pipewire capture availability on this Linux lab", { skip: skipWithoutLab }, async () => {
 	const cap = createPipewireCaptureAdapter();
 	const avail = await cap.availability();
 	assert.equal(avail.status, "ready");
@@ -181,7 +182,7 @@ test("simulated: empty transcript notifies without submit", async () => {
 	assert.equal(session.state.phase, "idle");
 });
 
-test("real: lab resolve picks whisper+pipewire when REAL paths exist", () => {
+test("real: lab resolve picks whisper+pipewire when REAL paths exist", { skip: skipWithoutLab }, () => {
 	const prev = process.env.GENTLE_VOICE_REAL_AUDIO;
 	process.env.GENTLE_VOICE_REAL_AUDIO = "1";
 	try {
@@ -248,7 +249,7 @@ test("simulated: mic unavailable surfaces from capture adapter", async () => {
 	await assert.rejects(() => fake.start({ signal: new AbortController().signal }), /pw_record_missing/);
 });
 
-test("real: whisper temp wav cleaned after transcribe", async () => {
+test("real: whisper temp wav cleaned after transcribe", { skip: skipWithoutLab }, async () => {
 	const dir = join(tmpdir(), `gv-phase2a-clean-${Date.now()}`);
 	await mkdir(dir, { recursive: true });
 	const pcm = new Uint8Array(8_000 * 2);
