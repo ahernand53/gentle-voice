@@ -199,7 +199,7 @@ test("real: lab resolve picks whisper+pipewire when REAL paths exist", { skip: s
 	}
 });
 
-test("isolation: voxtype model path unchanged (still readable file)", async () => {
+test("isolation: voxtype model path unchanged (still readable file)", { skip: skipWithoutLab }, async () => {
 	const before = await readGgmlMagic(LAB_VOXTYPE_GGML_SMALL);
 	assert.ok(before);
 	// touch nothing — just re-read
