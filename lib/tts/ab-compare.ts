@@ -86,7 +86,7 @@ export async function runAbTrial(options: {
 	const t0 = performance.now();
 	try {
 		const result = await options.slot.adapter.synthesize(phrase, {
-			signal: options.signal,
+			signal: options.signal ?? new AbortController().signal,
 		});
 		const synthesizeMs = Math.round(performance.now() - t0);
 		const trial: AbCompareTrial = {

@@ -1,24 +1,22 @@
 /**
- * First-run readiness + consent-gated preparation.
- * Idempotent: if readiness says ready and files exist, no prompts.
- * Never downloads without explicit consent AND GENTLE_VOICE_ALLOW_DOWNLOADS=1
- * AND pinned sha256+url on the artifact.
+ * First-run readiness + consent-gated preparation (no lab env vars required).
+ * Idempotent. Opt-out: GENTLE_VOICE_DISABLE_DOWNLOADS=1
  */
 
 import { access, constants, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { arch as osArch } from "node:os";
 import { detectVoicePlatform } from "../config.ts";
 import {
 	artifactsFor,
+	detectArch,
 	formatBytes,
 	totalEstimatedBytes,
+	type CpuArch,
 	type RuntimeArtifact,
 } from "./artifacts.ts";
 import { checksumMatches, sha256File } from "./checksum.ts";
+import { installArtifact } from "./download.ts";
 import { resolveRuntimeLayout, type GentleVoiceRuntimeLayout } from "./paths.ts";
-
-export type CpuArch = "x64" | "arm64" | "other";
 
 export type ReadinessStatus =
 	| "ready"
@@ -26,40 +24,37 @@ export type ReadinessStatus =
 	| "needs_manual"
 	| "unsupported_platform"
 	| "downloads_disabled"
-	| "checksum_unpinned";
+	| "partial"
+	| "error";
 
 export interface ReadinessSnapshot {
 	readonly schema: "gentle-voice.readiness/v1";
 	readonly status: ReadinessStatus;
 	readonly checkedAt: string;
 	readonly platform: string;
-	readonly arch: CpuArch;
+	readonly arch: CpuArch | "other";
 	readonly layoutHome: string;
 	readonly missing: readonly string[];
 	readonly present: readonly string[];
 	readonly message: string;
 	readonly estimatedDownloadBytes: number;
+	readonly blockers: readonly string[];
 }
 
 export interface FirstRunPlan {
 	readonly layout: GentleVoiceRuntimeLayout;
-	readonly arch: CpuArch;
+	readonly arch: CpuArch | "other";
 	readonly missing: readonly RuntimeArtifact[];
 	readonly present: readonly RuntimeArtifact[];
 	readonly status: ReadinessStatus;
 	readonly summary: string;
 	readonly estimatedDownloadBytes: number;
+	readonly blockers: readonly string[];
 }
 
 export interface FirstRunHost {
 	notify(message: string, level?: "info" | "warning" | "error"): void;
 	confirm?(title: string, message: string): Promise<boolean>;
-}
-
-function detectArch(raw: string = osArch()): CpuArch {
-	if (raw === "x64" || raw === "x86_64") return "x64";
-	if (raw === "arm64" || raw === "aarch64") return "arm64";
-	return "other";
 }
 
 async function existsReadable(path: string): Promise<boolean> {
@@ -71,10 +66,8 @@ async function existsReadable(path: string): Promise<boolean> {
 	}
 }
 
-function artifactAbsolute(layout: GentleVoiceRuntimeLayout, art: RuntimeArtifact): string {
-	if (art.kind === "stt-binary" || art.kind === "tts-binary") {
-		return join(layout.dataDir, art.relativePath);
-	}
+function artifactTarget(layout: GentleVoiceRuntimeLayout, art: RuntimeArtifact): string {
+	if (art.archive) return join(layout.dataDir, art.archive.installBinaryAs);
 	return join(layout.dataDir, art.relativePath);
 }
 
@@ -84,6 +77,7 @@ export async function buildFirstRunPlan(
 	const platform = detectVoicePlatform();
 	const layout = resolveRuntimeLayout(env, platform);
 	const arch = detectArch();
+	const blockers: string[] = [];
 
 	if (platform === "unsupported" || arch === "other") {
 		return {
@@ -94,46 +88,52 @@ export async function buildFirstRunPlan(
 			status: "unsupported_platform",
 			summary: `Platform/arch not supported yet (${platform}/${arch}).`,
 			estimatedDownloadBytes: 0,
+			blockers: [`unsupported:${platform}/${arch}`],
 		};
+	}
+
+	if (platform === "darwin") {
+		blockers.push(
+			"whisper-cli: no official macOS CLI binary in whisper.cpp b5454 — STT auto-install incomplete on macOS until a pinned binary is added.",
+		);
 	}
 
 	const catalog = artifactsFor(platform, arch);
 	const present: RuntimeArtifact[] = [];
 	const missing: RuntimeArtifact[] = [];
 	for (const art of catalog) {
-		const path = artifactAbsolute(layout, art);
+		const path = artifactTarget(layout, art);
 		if (await existsReadable(path)) present.push(art);
 		else missing.push(art);
 	}
 
-	if (missing.length === 0) {
+	if (missing.length === 0 && blockers.length === 0) {
 		return {
 			layout,
 			arch,
 			missing,
 			present,
 			status: "ready",
-			summary: "All default STT/TTS artifacts present under private Gentle Voice data dir.",
+			summary: "All pinned STT/TTS artifacts present under the private Gentle Voice data dir.",
 			estimatedDownloadBytes: 0,
+			blockers,
 		};
 	}
 
-	const unpinned = missing.filter((a) => !a.sha256 || !a.url);
-	if (unpinned.length === missing.length) {
+	if (missing.length === 0 && blockers.length > 0) {
 		return {
 			layout,
 			arch,
 			missing,
 			present,
-			status: "checksum_unpinned",
-			summary:
-				`Missing ${missing.length} artifact(s) (~${formatBytes(totalEstimatedBytes(missing))}). `
-				+ "Release has not pinned download URLs/SHA-256 yet — install engines manually or wait for a pinned beta.",
-			estimatedDownloadBytes: totalEstimatedBytes(missing),
+			status: "partial",
+			summary: `Binaries/models present, but platform blockers remain: ${blockers.join(" ")}`,
+			estimatedDownloadBytes: 0,
+			blockers,
 		};
 	}
 
-	if (env.GENTLE_VOICE_ALLOW_DOWNLOADS !== "1") {
+	if (env.GENTLE_VOICE_DISABLE_DOWNLOADS === "1") {
 		return {
 			layout,
 			arch,
@@ -142,8 +142,9 @@ export async function buildFirstRunPlan(
 			status: "downloads_disabled",
 			summary:
 				`Missing ${missing.length} artifact(s) (~${formatBytes(totalEstimatedBytes(missing))}). `
-				+ "Set GENTLE_VOICE_ALLOW_DOWNLOADS=1 and approve the consent prompt to fetch pinned releases.",
+				+ "Downloads disabled via GENTLE_VOICE_DISABLE_DOWNLOADS=1.",
 			estimatedDownloadBytes: totalEstimatedBytes(missing),
+			blockers,
 		};
 	}
 
@@ -157,6 +158,7 @@ export async function buildFirstRunPlan(
 			`Ready to download ${missing.length} artifact(s) (~${formatBytes(totalEstimatedBytes(missing))}) `
 			+ "into the private Gentle Voice data directory after consent.",
 		estimatedDownloadBytes: totalEstimatedBytes(missing),
+		blockers,
 	};
 }
 
@@ -171,7 +173,10 @@ export async function loadReadiness(
 	}
 }
 
-export async function saveReadiness(snapshot: ReadinessSnapshot, layout: GentleVoiceRuntimeLayout): Promise<void> {
+export async function saveReadiness(
+	snapshot: ReadinessSnapshot,
+	layout: GentleVoiceRuntimeLayout,
+): Promise<void> {
 	await mkdir(dirname(layout.readinessFile), { recursive: true });
 	const tmp = `${layout.readinessFile}.${process.pid}.tmp`;
 	await writeFile(tmp, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
@@ -190,29 +195,35 @@ export function snapshotFromPlan(plan: FirstRunPlan): ReadinessSnapshot {
 		present: plan.present.map((a) => a.id),
 		message: plan.summary,
 		estimatedDownloadBytes: plan.estimatedDownloadBytes,
+		blockers: plan.blockers,
 	};
 }
 
+async function ensureDirs(layout: GentleVoiceRuntimeLayout): Promise<void> {
+	await mkdir(layout.dataDir, { recursive: true });
+	await mkdir(layout.configDir, { recursive: true });
+	await mkdir(layout.modelsDir, { recursive: true });
+	await mkdir(layout.binDir, { recursive: true });
+	await mkdir(layout.cacheDir, { recursive: true });
+	await mkdir(layout.tmpDir, { recursive: true });
+	await mkdir(layout.logsDir, { recursive: true });
+	await mkdir(join(layout.cacheDir, "downloads"), { recursive: true });
+}
+
 /**
- * Ensure private dirs exist; evaluate readiness; optionally consent-download.
- * Does not modify PATH, shell rc, or system packages.
+ * Ensure private dirs exist; evaluate readiness; download after consent.
  */
 export async function runFirstRunPreparation(
 	host: FirstRunHost,
 	env: NodeJS.ProcessEnv = process.env,
 ): Promise<ReadinessSnapshot> {
 	const plan = await buildFirstRunPlan(env);
-	await mkdir(plan.layout.dataDir, { recursive: true });
-	await mkdir(plan.layout.configDir, { recursive: true });
-	await mkdir(plan.layout.modelsDir, { recursive: true });
-	await mkdir(plan.layout.binDir, { recursive: true });
-	await mkdir(plan.layout.cacheDir, { recursive: true });
-	await mkdir(plan.layout.tmpDir, { recursive: true });
-	await mkdir(plan.layout.logsDir, { recursive: true });
+	await ensureDirs(plan.layout);
 
-	if (plan.status === "ready") {
+	if (plan.status === "ready" || plan.status === "partial") {
 		const snap = snapshotFromPlan(plan);
 		await saveReadiness(snap, plan.layout);
+		if (plan.status === "partial") host.notify(plan.summary, "warning");
 		return snap;
 	}
 
@@ -225,58 +236,69 @@ export async function runFirstRunPreparation(
 	}
 
 	const lines = [
-		"Gentle Voice wants to download local STT/TTS components:",
+		"Gentle Voice needs local STT/TTS components (one-time download):",
 		...plan.missing.map(
 			(a) => `• ${a.displayName} (~${formatBytes(a.estimatedBytes)}) — ${a.license}`,
 		),
 		`Total ≈ ${formatBytes(plan.estimatedDownloadBytes)}`,
 		`Install root: ${plan.layout.dataDir}`,
 		"No sudo. No PATH changes. Artifacts stay private to Gentle Voice.",
+		...(plan.blockers.length ? ["", "Known blockers:", ...plan.blockers.map((b) => `• ${b}`)] : []),
 	].join("\n");
 
 	let ok = false;
 	if (typeof host.confirm === "function") {
 		ok = await host.confirm("Gentle Voice setup", lines);
+	} else if (env.GENTLE_VOICE_AUTO_DOWNLOAD === "1") {
+		ok = true;
+		host.notify("GENTLE_VOICE_AUTO_DOWNLOAD=1 — proceeding without interactive confirm.", "warning");
+	} else {
+		const snap = snapshotFromPlan({
+			...plan,
+			status: "needs_manual",
+			summary:
+				"Host has no confirm() UI. Re-run /gentle:voice setup in an interactive session, "
+				+ "or set GENTLE_VOICE_AUTO_DOWNLOAD=1 after reviewing licenses/sizes.",
+		});
+		await saveReadiness(snap, plan.layout);
+		host.notify(`${snap.message}\n\n${lines}`, "warning");
+		return snap;
 	}
 	if (!ok) {
 		const snap = snapshotFromPlan({
 			...plan,
 			status: "needs_manual",
-			summary: "User declined downloads. Provide engines under the data dir or re-run with consent.",
+			summary: "User declined downloads. Re-run /gentle:voice setup when ready.",
 		});
 		await saveReadiness(snap, plan.layout);
 		host.notify(snap.message, "warning");
 		return snap;
 	}
 
-	// Download path reserved for pinned artifacts only.
-	for (const art of plan.missing) {
-		if (!art.url || !art.sha256) {
-			const snap = snapshotFromPlan({
-				...plan,
-				status: "checksum_unpinned",
-				summary: `Cannot download ${art.id}: url/sha256 not pinned in this release.`,
-			});
-			await saveReadiness(snap, plan.layout);
-			host.notify(snap.message, "error");
-			return snap;
+	try {
+		for (const art of plan.missing) {
+			await installArtifact(art, plan.layout, (msg) => host.notify(msg, "info"));
 		}
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		const snap = snapshotFromPlan({
+			...plan,
+			status: "error",
+			summary: `Download/install failed: ${message}`,
+		});
+		await saveReadiness(snap, plan.layout);
+		host.notify(snap.message, "error");
+		return snap;
 	}
 
-	host.notify(
-		"Download URLs are pinned in catalog but network fetch is not enabled in this beta build yet. Place verified binaries manually under the data dir.",
-		"warning",
-	);
-	const snap = snapshotFromPlan({
-		...plan,
-		status: "needs_manual",
-		summary: "Consent recorded; automated fetch lands after checksum-pinned release assets.",
-	});
+	const after = await buildFirstRunPlan(env);
+	const snap = snapshotFromPlan(after);
 	await saveReadiness(snap, plan.layout);
+	host.notify(snap.message, snap.status === "ready" || snap.status === "partial" ? "info" : "warning");
 	return snap;
 }
 
-/** Verify a file against expected sha256 (for tests + future download). */
+/** Verify a file against expected sha256. */
 export async function verifyArtifactFile(
 	path: string,
 	expectedSha256: string,

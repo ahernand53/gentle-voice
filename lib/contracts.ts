@@ -38,7 +38,7 @@ export type VoicePlatform = "linux" | "win32" | "darwin" | "unsupported";
 /** Capability probe result — never throws; degrade closed. */
 export type AdapterAvailability =
 	| { status: "ready"; detail?: string }
-	| { status: "unavailable"; reason: string }
+	| { status: "unavailable"; reason: string; detail?: string }
 	| { status: "degraded"; reason: string; detail?: string };
 
 /** Lab diagnostics for one capture segment (no full audio / full transcript). */

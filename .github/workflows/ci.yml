@@ -24,8 +24,7 @@ jobs:
         run: npm install
       - name: Unit tests
         run: npm test
-      - name: Typecheck (lib surface; known exactOptional debt)
-        continue-on-error: true
+      - name: Typecheck
         run: npm run typecheck
       - name: Pack dry-run
         run: npm pack --dry-run

@@ -173,8 +173,9 @@ async function runVoiceEdit(
 	const existing = (ctx.ui.getEditorText?.() ?? "").trim();
 	if (existing && existing !== prep.text.trim()) {
 		let overwrite = true;
-		if (typeof (ctx.ui as { confirm?: (t: string, m: string) => Promise<boolean> }).confirm === "function") {
-			overwrite = await (ctx.ui as { confirm: (t: string, m: string) => Promise<boolean> }).confirm(
+		const editConfirm = (ctx.ui as unknown as { confirm?: (t: string, m: string) => Promise<boolean> }).confirm;
+		if (typeof editConfirm === "function") {
+			overwrite = await editConfirm(
 				"Gentle Voice Edit",
 				"El editor ya tiene texto. ¿Reemplazarlo por la transcripción de voz?",
 			);
@@ -807,7 +808,7 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 					break;
 				}
 				case "setup": {
-					const uiConfirm = (ctx.ui as { confirm?: (t: string, m: string) => Promise<boolean> }).confirm;
+					const uiConfirm = (ctx.ui as unknown as { confirm?: (t: string, m: string) => Promise<boolean> }).confirm;
 					const snap = await runFirstRunPreparation({
 						notify: (message, level) => {
 							try {

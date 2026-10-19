@@ -1,11 +1,11 @@
 /**
  * Honest compatibility matrix.
- * "supported" only when smoke-tested with real audio on that OS.
+ * "supported" only when clean install + real mic/speaker conversation passed.
  */
 
 import type { VoicePlatform } from "../contracts.ts";
 
-export type SupportLevel = "supported" | "experimental" | "planned" | "unsupported";
+export type SupportLevel = "supported" | "experimental" | "planned" | "blocked" | "unsupported";
 
 export interface CompatCell {
 	readonly platform: VoicePlatform;
@@ -29,51 +29,54 @@ export const COMPAT_MATRIX: readonly CompatCell[] = Object.freeze([
 		tts: "experimental" as const,
 		hostPi: "experimental" as const,
 		hostGentleShell: "experimental" as const,
-		notes: "PipeWire + Whisper + Piper/Kokoro exercised in developer lab (CachyOS/Omarchy). Not a universal Linux claim.",
+		notes:
+			"PipeWire + pinned Whisper/Piper downloads. Lab conversation exercised; clean-HOME auto-download path implemented — re-verify after merge.",
 	}),
 	Object.freeze({
 		platform: "linux" as const,
 		arch: "arm64" as const,
 		capture: "planned" as const,
 		playback: "planned" as const,
-		stt: "planned" as const,
-		tts: "planned" as const,
+		stt: "experimental" as const,
+		tts: "experimental" as const,
 		hostPi: "planned" as const,
 		hostGentleShell: "planned" as const,
-		notes: "Needs ARM64 binary + smoke tests.",
+		notes: "Binaries pinned (ubuntu-arm64 + piper aarch64). Capture/playback smoke pending on ARM hardware.",
 	}),
 	Object.freeze({
 		platform: "win32" as const,
 		arch: "x64" as const,
-		capture: "planned" as const,
-		playback: "planned" as const,
-		stt: "planned" as const,
-		tts: "planned" as const,
+		capture: "blocked" as const,
+		playback: "blocked" as const,
+		stt: "experimental" as const,
+		tts: "experimental" as const,
 		hostPi: "planned" as const,
 		hostGentleShell: "planned" as const,
-		notes: "WASAPI adapters not implemented; do not claim Windows support.",
+		notes:
+			"Whisper/Piper Windows binaries pinned. WASAPI adapters not smoke-tested — do not claim conversation support.",
 	}),
 	Object.freeze({
 		platform: "darwin" as const,
 		arch: "arm64" as const,
-		capture: "planned" as const,
-		playback: "planned" as const,
-		stt: "planned" as const,
-		tts: "planned" as const,
+		capture: "blocked" as const,
+		playback: "blocked" as const,
+		stt: "blocked" as const,
+		tts: "experimental" as const,
 		hostPi: "planned" as const,
 		hostGentleShell: "planned" as const,
-		notes: "CoreAudio adapters not implemented; TCC mic permission path undocumented until smoke test.",
+		notes:
+			"Piper macOS arm64 pinned. Official whisper.cpp b5454 has no macOS CLI — STT auto-install blocked. CoreAudio untested.",
 	}),
 	Object.freeze({
 		platform: "darwin" as const,
 		arch: "x64" as const,
-		capture: "planned" as const,
-		playback: "planned" as const,
-		stt: "planned" as const,
-		tts: "planned" as const,
+		capture: "blocked" as const,
+		playback: "blocked" as const,
+		stt: "blocked" as const,
+		tts: "experimental" as const,
 		hostPi: "planned" as const,
 		hostGentleShell: "planned" as const,
-		notes: "Intel macOS secondary; only if upstream binaries exist.",
+		notes: "Piper macOS x64 pinned. Whisper CLI + CoreAudio pending.",
 	}),
 ]);
 

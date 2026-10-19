@@ -1,6 +1,6 @@
 /**
- * Phase 3 — portable paths, first-run plan, checksum, compat matrix.
- * No network downloads.
+ * Phase 3 / 3.1 — portable paths, first-run plan, checksum, download helpers.
+ * Network downloads only in explicit opt-in tests (skipped by default).
  */
 
 import assert from "node:assert/strict";
@@ -12,7 +12,9 @@ import { sha256Buffer, checksumMatches } from "../lib/runtime/checksum.ts";
 import { resolveRuntimeLayout } from "../lib/runtime/paths.ts";
 import { buildFirstRunPlan, verifyArtifactFile } from "../lib/runtime/first-run.ts";
 import { formatCompatMarkdown, COMPAT_MATRIX } from "../lib/runtime/compat-matrix.ts";
+import { artifactsFor, detectArch } from "../lib/runtime/artifacts.ts";
 import { parseVoiceArgs } from "../lib/commands.ts";
+import { verifySha256 } from "../lib/runtime/download.ts";
 
 test("3 paths: linux XDG layout under HOME", () => {
 	const layout = resolveRuntimeLayout(
@@ -52,14 +54,23 @@ test("3 paths: darwin Application Support", () => {
 	assert.match(layout.cacheDir, /Caches\/gentle-voice$/);
 });
 
-test("3 first-run: isolated home reports checksum_unpinned when artifacts missing", async () => {
+test("3.1 artifacts: linux x64 catalog is fully pinned", () => {
+	const arts = artifactsFor("linux", "x64");
+	assert.ok(arts.length >= 5);
+	for (const a of arts) {
+		assert.ok(a.url, a.id);
+		assert.equal(a.sha256.length, 64, a.id);
+	}
+});
+
+test("3.1 first-run: isolated home reports needs_consent when artifacts missing", async () => {
 	const root = await mkdtemp(join(tmpdir(), "gv-firstrun-"));
 	const plan = await buildFirstRunPlan({
 		GENTLE_VOICE_HOME: root,
 		HOME: root,
 	});
 	assert.ok(plan.missing.length > 0);
-	assert.equal(plan.status, "checksum_unpinned");
+	assert.equal(plan.status, "needs_consent");
 	assert.ok(plan.estimatedDownloadBytes > 0);
 });
 
@@ -71,13 +82,15 @@ test("3 checksum helpers", async () => {
 	const file = join(root, "x.bin");
 	await writeFile(file, "abc");
 	assert.equal(await verifyArtifactFile(file, ""), false);
+	await verifySha256(file, sha256Buffer(Buffer.from("abc")));
 });
 
-test("3 compat matrix never marks win32/darwin as supported yet", () => {
+test("3 compat matrix never marks win32/darwin conversation as supported", () => {
 	for (const cell of COMPAT_MATRIX) {
 		if (cell.platform === "win32" || cell.platform === "darwin") {
 			assert.notEqual(cell.capture, "supported");
 			assert.notEqual(cell.playback, "supported");
+			assert.ok(cell.capture === "blocked" || cell.capture === "planned");
 		}
 	}
 	assert.match(formatCompatMarkdown(), /linux/);
@@ -93,4 +106,8 @@ test("3 first-run dirs created under private home only", async () => {
 	const layout = resolveRuntimeLayout({ GENTLE_VOICE_HOME: root }, "linux");
 	assert.equal(layout.home, root);
 	assert.ok(layout.modelsDir.startsWith(root));
+});
+
+test("3.1 detectArch", () => {
+	assert.ok(["x64", "arm64", "other"].includes(detectArch()));
 });
