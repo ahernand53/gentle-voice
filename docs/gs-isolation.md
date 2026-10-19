@@ -32,7 +32,18 @@ Does not write into GS `versions/` or `runtime/`.
 | GS custom home | `gs-custom-home` | `<agentHome>/gentle-voice` |
 | Overrides | `override` | `$GENTLE_VOICE_HOME` |
 
+## Lab path gate (3.4.1)
+
+Product mode (lab OFF) must not touch developer absolutes:
+
+- No WD-Black / `/home/erickfm/...` probes
+- No Voxtype model reuse
+- No Kokoro-from-lab detection (`labKokoroPresent()` short-circuits)
+
+Enable lab only with `GENTLE_VOICE_LAB=1` or `GENTLE_VOICE_REAL_AUDIO=1`.
+
 ## Uninstall / cleanup
 
 - Package: `gentle-shell remove npm:gentle-voice` or `pi remove npm:gentle-voice`
 - Data: `/gentle:voice storage` dry-run only; no automatic delete
+- Never deletes WD-Black / Voxtype / other apps’ files

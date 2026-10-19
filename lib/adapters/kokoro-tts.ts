@@ -10,9 +10,11 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AdapterAvailability, AudioChunk, TtsAdapter, TtsResult } from "../contracts.ts";
 import { throwIfAborted } from "../process-cancel.ts";
+import { isGentleVoiceLabPathsAllowed } from "../runtime/lab-gate.ts";
 import { runCaptured } from "./node-process.ts";
 import { isWavBuffer } from "./wav.ts";
 
+/** Lab-only absolute paths — never used unless lab gate is ON. */
 export const LAB_KOKORO_ROOT = "/home/erickfm/WD-Black/gentle-voice";
 export const LAB_KOKORO_PYTHON = `${LAB_KOKORO_ROOT}/venv/bin/python`;
 export const LAB_KOKORO_SCRIPT = `${LAB_KOKORO_ROOT}/bin/kokoro-synth.py`;
@@ -67,11 +69,12 @@ async function isFile(path: string): Promise<boolean> {
 }
 
 export function createKokoroTtsAdapter(options: KokoroTtsAdapterOptions = {}): KokoroTtsAdapter {
-	const pythonPath = options.pythonPath ?? LAB_KOKORO_PYTHON;
-	const scriptPath = options.scriptPath ?? LAB_KOKORO_SCRIPT;
-	const modelPath = options.modelPath ?? LAB_KOKORO_MODEL;
-	const voicesPath = options.voicesPath ?? LAB_KOKORO_VOICES;
-	const vocabPath = options.vocabPath ?? LAB_KOKORO_VOCAB;
+	const labDefaults = isGentleVoiceLabPathsAllowed();
+	const pythonPath = options.pythonPath ?? (labDefaults ? LAB_KOKORO_PYTHON : "");
+	const scriptPath = options.scriptPath ?? (labDefaults ? LAB_KOKORO_SCRIPT : "");
+	const modelPath = options.modelPath ?? (labDefaults ? LAB_KOKORO_MODEL : "");
+	const voicesPath = options.voicesPath ?? (labDefaults ? LAB_KOKORO_VOICES : "");
+	const vocabPath = options.vocabPath ?? (labDefaults ? LAB_KOKORO_VOCAB : "");
 	const voice = options.voice ?? "ef_dora";
 	const lang = options.lang ?? "es";
 	const dryRun = options.dryRun ?? false;
@@ -87,6 +90,13 @@ export function createKokoroTtsAdapter(options: KokoroTtsAdapterOptions = {}): K
 			return lastMetrics;
 		},
 		async availability(): Promise<AdapterAvailability> {
+			if (!pythonPath || !scriptPath || !modelPath || !voicesPath) {
+				return {
+					status: "unavailable",
+					reason: "kokoro_not_configured",
+					detail: "Kokoro requires explicit paths or GENTLE_VOICE_LAB=1 (lab only).",
+				};
+			}
 			if (!(await isExecutable(pythonPath))) {
 				return { status: "unavailable", reason: "kokoro_python_missing", detail: pythonPath };
 			}
@@ -133,6 +143,12 @@ export function createKokoroTtsAdapter(options: KokoroTtsAdapterOptions = {}): K
 						format: "wav",
 					},
 				};
+			}
+
+			if (!pythonPath || !scriptPath || !modelPath || !voicesPath) {
+				throw new Error(
+					"Kokoro is not configured (lab OFF and no explicit paths). Product TTS default is Piper.",
+				);
 			}
 
 			await mkdir(tmpDir, { recursive: true });
@@ -211,8 +227,12 @@ export function createKokoroTtsAdapter(options: KokoroTtsAdapterOptions = {}): K
 	};
 }
 
-/** True when lab Kokoro install looks complete (sync, for resolve). */
-export function labKokoroPresent(): boolean {
+/**
+ * True when lab Kokoro install looks complete.
+ * Lab OFF → always false and **does not** touch WD-Black / developer paths.
+ */
+export function labKokoroPresent(env: NodeJS.ProcessEnv = process.env): boolean {
+	if (!isGentleVoiceLabPathsAllowed(env)) return false;
 	try {
 		accessSync(LAB_KOKORO_PYTHON, fsConstants.X_OK);
 		accessSync(LAB_KOKORO_SCRIPT, fsConstants.R_OK);

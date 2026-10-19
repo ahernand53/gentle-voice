@@ -113,15 +113,22 @@ test("2C.1: energy VAD ends after speech then hang silence", () => {
 
 test("2C.1: filesystem probe finds lab whisper-cli under WD-Black", { skip: skipWithoutLab }, async () => {
 	await access(LAB_WHISPER_CLI_CANDIDATE, constants.X_OK);
-	const setup = await beginSetup({ probe: createFilesystemEngineProbe() });
-	const whisper = setup.report.stt.find((e) => e.spec.id === "whisper-cpp");
-	assert.ok(whisper);
-	assert.equal(whisper.status, "compatible");
-	assert.ok(
-		whisper.path?.includes("whisper-cli") || whisper.path?.includes("ggml"),
-	);
-	assert.match(setup.report.message, /Whisper|Piper|ready|compatible/i);
-	assert.ok(!/Whisper\.cpp missing/i.test(setup.report.message));
+	const prevLab = process.env.GENTLE_VOICE_LAB;
+	process.env.GENTLE_VOICE_LAB = "1";
+	try {
+		const setup = await beginSetup({ probe: createFilesystemEngineProbe() });
+		const whisper = setup.report.stt.find((e) => e.spec.id === "whisper-cpp");
+		assert.ok(whisper);
+		assert.equal(whisper.status, "compatible");
+		assert.ok(
+			whisper.path?.includes("whisper-cli") || whisper.path?.includes("ggml"),
+		);
+		assert.match(setup.report.message, /Whisper|Piper|ready|compatible/i);
+		assert.ok(!/Whisper\.cpp missing/i.test(setup.report.message));
+	} finally {
+		if (prevLab === undefined) delete process.env.GENTLE_VOICE_LAB;
+		else process.env.GENTLE_VOICE_LAB = prevLab;
+	}
 });
 
 test("2C.1: harness turn_end + settled speaks (no tokens)", async () => {

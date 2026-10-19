@@ -587,7 +587,10 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 				}
 				if (eng === "kokoro") {
 					if (!resolved.kokoroAdapter) {
-						ctx.ui.notify("Kokoro not installed in WD-Black lab.", "warning");
+						ctx.ui.notify(
+							"Kokoro unavailable (lab OFF or not installed). Product default is Piper. Set GENTLE_VOICE_LAB=1 only in a dedicated lab.",
+							"warning",
+						);
 						return;
 					}
 					session.deps.tts = resolved.kokoroAdapter;

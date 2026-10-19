@@ -31,6 +31,7 @@ import {
 	LAB_WHISPER_CLI_CANDIDATE,
 } from "./whisper-stt.ts";
 import { DEFAULT_WHISPER_INITIAL_PROMPT } from "../stt/corrections.ts";
+import { isGentleVoiceLabPathsAllowed } from "../runtime/lab-gate.ts";
 import { resolveRuntimeLayout } from "../runtime/paths.ts";
 import { resolveVoiceAdapters, type VoiceAdapterBundle } from "./platform.ts";
 import {
@@ -38,6 +39,11 @@ import {
 	createOsFfmpegPlaybackAdapter,
 	findFfmpeg,
 } from "./os-audio.ts";
+
+/** @deprecated Prefer isGentleVoiceLabPathsAllowed — kept as alias for call sites. */
+export function labPathsAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
+	return isGentleVoiceLabPathsAllowed(env);
+}
 
 function exeSync(path: string): boolean {
 	try {
@@ -57,11 +63,6 @@ function readableSync(path: string): boolean {
 	}
 }
 
-function labPathsAllowed(): boolean {
-	return process.env.GENTLE_VOICE_LAB === "1"
-		|| process.env.GENTLE_VOICE_REAL_AUDIO === "1";
-}
-
 function resolveTmpDir(options?: { config?: VoiceConfig; tmpDir?: string }): string {
 	if (options?.tmpDir) return options.tmpDir;
 	if (options?.config?.paths.tmp) return options.config.paths.tmp;
@@ -69,7 +70,7 @@ function resolveTmpDir(options?: { config?: VoiceConfig; tmpDir?: string }): str
 	const layout = resolveRuntimeLayout();
 	if (existsSync(layout.tmpDir)) return layout.tmpDir;
 	const wd = "/home/erickfm/WD-Black/gentle-voice/tmp";
-	if (labPathsAllowed() && existsSync(wd)) return wd;
+	if (isGentleVoiceLabPathsAllowed() && existsSync(wd)) return wd;
 	return join(tmpdir(), "gentle-voice");
 }
 
@@ -101,7 +102,7 @@ function resolvePiperFromEnvOrLab(): {
 			voiceConfigPath: readableSync(runtimeVoiceCfg) ? runtimeVoiceCfg : `${runtimeVoice}.json`,
 		};
 	}
-	if (!labPathsAllowed()) return undefined;
+	if (!isGentleVoiceLabPathsAllowed()) return undefined;
 	if (
 		exeSync(LAB_PIPER_DEFAULTS.piperPath)
 		&& readableSync(LAB_PIPER_DEFAULTS.voiceModelPath)
@@ -125,10 +126,14 @@ function resolveWhisperFromRuntimeOrLab(config?: VoiceConfig): {
 		|| config?.engines.sttModel?.trim();
 	const cli = (envCli && exeSync(envCli) ? envCli : undefined)
 		|| (exeSync(runtimeCli) ? runtimeCli : undefined)
-		|| (labPathsAllowed() && exeSync(LAB_WHISPER_CLI_CANDIDATE) ? LAB_WHISPER_CLI_CANDIDATE : undefined);
+		|| (isGentleVoiceLabPathsAllowed() && exeSync(LAB_WHISPER_CLI_CANDIDATE)
+			? LAB_WHISPER_CLI_CANDIDATE
+			: undefined);
 	const model = (envModel && readableSync(envModel) ? envModel : undefined)
 		|| (readableSync(runtimeModel) ? runtimeModel : undefined)
-		|| (labPathsAllowed() && readableSync(LAB_VOXTYPE_GGML_SMALL) ? LAB_VOXTYPE_GGML_SMALL : undefined);
+		|| (isGentleVoiceLabPathsAllowed() && readableSync(LAB_VOXTYPE_GGML_SMALL)
+			? LAB_VOXTYPE_GGML_SMALL
+			: undefined);
 	if (cli && model) return { cli, model };
 	return undefined;
 }
@@ -246,10 +251,12 @@ export function resolveLabVoiceAdapters(options?: {
 			piperVoice = piper.voiceModelPath;
 		}
 
+		// Kokoro lab paths only when gate is ON (labKokoroPresent short-circuits OFF).
 		if (labKokoroPresent()) {
 			kokoroAdapter = createKokoroTtsAdapter({ tmpDir, keepTemp: false, dryRun: false });
 			kokoroReady = true;
 			const prefer = (process.env.GENTLE_VOICE_TTS ?? "").trim().toLowerCase();
+			// Product default remains Piper; Kokoro only when explicitly preferred in lab.
 			if (prefer === "kokoro" && kokoroAdapter) {
 				tts = kokoroAdapter;
 				ttsKind = "kokoro";
