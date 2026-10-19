@@ -138,7 +138,9 @@ test("7. custom install root appears in plan paths", async () => {
 	const hardware = readHardwareProfile({ platform: "linux", probe: midRam });
 	const root = "/mnt/custom/voice-engines";
 	const plan = buildInstallPlan({ report, mode: "recommended", installRoot: root, hardware });
-	assert.ok(plan.components.every((c) => c.installRoot.startsWith(root)));
+	assert.ok(
+		plan.components.every((c) => c.installRoot.replace(/\\/g, "/").startsWith(root)),
+	);
 });
 
 test("8. model compatibility with engines + Spanish defaults", () => {
