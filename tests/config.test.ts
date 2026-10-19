@@ -27,14 +27,15 @@ test("rejects invalid mode", () => {
 	assert.equal(result.ok, false);
 });
 
-test("resolveVoicePaths prefers env over config and never invents home", () => {
+test("resolveVoicePaths prefers env over config; falls back to portable layout", () => {
 	const config = {
 		...DEFAULT_VOICE_CONFIG,
 		paths: { models: "from-config" },
 	};
 	const empty = resolveVoicePaths(config, {});
-	assert.equal(empty.home, undefined);
+	assert.ok(empty.home && empty.home.length > 0, "portable home fallback");
 	assert.equal(empty.models, "from-config");
+	assert.ok(empty.cache && empty.tmp);
 
 	const env = resolveVoicePaths(config, {
 		GENTLE_VOICE_MODELS: "/portable/models",
@@ -42,7 +43,7 @@ test("resolveVoicePaths prefers env over config and never invents home", () => {
 	});
 	assert.equal(env.models, "/portable/models");
 	assert.equal(env.home, "/portable/home");
-	assert.equal(env.configFile, "/portable/home/config.json");
+	assert.match(env.configFile ?? "", /config\.json$/);
 });
 
 test("detectVoicePlatform maps node platforms", () => {

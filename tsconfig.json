@@ -9,6 +9,7 @@
 		"exactOptionalPropertyTypes": true,
 		"skipLibCheck": true,
 		"noEmit": true,
+		"allowImportingTsExtensions": true,
 		"rootDir": ".",
 		"types": ["node"],
 		"verbatimModuleSyntax": true,

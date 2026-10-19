@@ -8,103 +8,100 @@
 [![Built for Pi](https://img.shields.io/badge/built%20for-Pi-6f42c1)](https://github.com/badlogic/pi-mono)
 [![Gentle Shell](https://img.shields.io/badge/works%20with-gentle--shell-22c55e)](https://github.com/Gentleman-Programming/gentle-shell)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![npm](https://img.shields.io/badge/npm-not%20published%20yet-lightgrey)](https://www.npmjs.com/package/gentle-voice)
 
 </div>
 
-Gentle Shell is **not** required. It is only an optional compatibility test host.
+Speak with your already-authenticated Pi / Gentle Shell model. Gentle Voice runs **local** speech-to-text and text-to-speech. It does **not** require OpenAI, ElevenLabs, or a second login.
 
-> Experimental lab project. Linux + PipeWire is the supported path.
-> Windows / macOS are **not** claimed as supported.
+> **Status:** `0.1.0-beta.1` — packaging + portable first-run scaffolding.  
+> **Do not** treat Windows/macOS as supported until real audio smoke tests exist.  
+> **npm / `pi install npm:gentle-voice`:** not published until a human approves the first release.
 
-## Recommended engines
+## Requirements
 
-| Role | Recommended | Fallback |
-| --- | --- | --- |
-| STT | Whisper.cpp | stubs (tests) |
-| TTS | Kokoro (lab) / **Piper** (stable fallback) | stubs |
+- Node.js ≥ 22.19 (same class as current Pi)
+- Pi Coding Agent ≥ 1.2 **or** Gentle Shell that hosts Pi packages
+- Linux + PipeWire recommended for real mic/speaker today
+- Disk for local models (order of **hundreds of MiB** once downloads are pinned)
 
-No automatic model downloads. No global package installs from this repo.
+## Install (when published)
 
-## Modes
+```bash
+# Pi
+pi install npm:gentle-voice
 
-| Mode | Behavior |
+# Gentle Shell
+gentle-shell install npm:gentle-voice
+```
+
+Until npm publish is approved, install from git:
+
+```bash
+pi install git:github.com/efolchmontiel/gentle-voice@main
+# or a release tag once cut
+```
+
+Restart Pi / Gentle Shell after install.
+
+### First run
+
+1. Run `/gentle:voice setup` (or enable voice once).
+2. Gentle Voice uses a **private data directory** (XDG / LocalAppData / Application Support) — not your project folder.
+3. If engines are missing, you see a summary of licenses + approximate size.
+4. Downloads only proceed with **consent** and `GENTLE_VOICE_ALLOW_DOWNLOADS=1`, and only after release assets have pinned SHA-256.
+5. Until pins exist, place Whisper.cpp + Piper under the data dir shown by `/gentle:voice config`.
+
+## Commands & shortcuts
+
+| Action | How |
 | --- | --- |
-| **Conversation** | Hands-free listen → STT → optional auto-submit → agent reply → TTS → re-listen |
-| **Dictation** | Capture → transcript for review; never auto-submits |
-| **Silent** | Transcript path without TTS |
+| Toggle conversation | `Ctrl+Alt+Space` (when verified free) or `/gentle:voice` |
+| Edit current / last voice line | `Ctrl+Alt+E` or `/gentle:voice edit` |
+| Cancel capture / TTS | `Esc` (when voice is busy) |
+| Setup / readiness | `/gentle:voice setup` |
+| Status | `/gentle:voice status` |
 
-## Shortcuts
+Modes: **conversation** (default hands-free path) and **dictation** (review, no auto-send).
 
-| Chord | Action |
-| --- | --- |
-| `Ctrl+Alt+Space` | Toggle / enable voice (registered only when verified free) |
-| `Ctrl+Alt+E` | Edit current capture (or last sent voice line if idle) |
-| `Esc` | Cancel capture / TTS / stream queue; abort agent if awaiting |
+## Compatibility (honest)
 
-Check conflicts with Hyprland / terminal / Gentle Shell before enabling lab shortcuts.
+| OS | Arch | Capture | Playback | STT/TTS | Notes |
+| --- | --- | --- | --- | --- | --- |
+| Linux | x64 | experimental | experimental | experimental | Lab: PipeWire + Whisper + Piper/Kokoro |
+| Linux | arm64 | planned | planned | planned | Needs binaries + smoke tests |
+| Windows | x64 | planned | planned | planned | WASAPI not implemented |
+| macOS | arm64/x64 | planned | planned | planned | CoreAudio / TCC not smoke-tested |
 
-### Ctrl+Alt+E (capture-aware)
-
-1. If **listening** or **transcribing**: hold auto-submit, finish capture, transcribe, put **current** text in Pi’s editor.
-2. If idle with a prior voice submit: load **last sent** line and notify that Enter **re-sends** (does not rewrite history).
-3. Empty / silence captures are not treated as valid utterances.
-4. Existing editor text is not overwritten without confirmation when the host supports `confirm`.
-
-## Install (Linux)
-
-```bash
-git clone <your-fork-or-repo> gentle-voice
-cd gentle-voice
-# Use the Node version in package.json engines
-npm install   # or pnpm install
-
-# Point models/cache at YOUR writable paths (examples — do not hardcode others' homes)
-export GENTLE_VOICE_HOME="$HOME/.local/share/gentle-voice"
-export GENTLE_VOICE_MODELS="$GENTLE_VOICE_HOME/models"
-export GENTLE_VOICE_CACHE="$GENTLE_VOICE_HOME/cache"
-export GENTLE_VOICE_TMP="${TMPDIR:-/tmp}/gentle-voice"
-```
-
-Wire the extension into Pi per [docs/experimental-integration.md](docs/experimental-integration.md).
-
-Lab-only real audio (developer machine):
-
-```bash
-export GENTLE_VOICE_LAB=1
-# optional: GENTLE_VOICE_LAB_AUTO_SUBMIT=1  GENTLE_VOICE_LAB_DIAG=1
-```
-
-## Tests
-
-```bash
-npm test
-# equivalent: node --experimental-strip-types --test tests/*.test.ts
-```
-
-Automated tests use stubs — **no LLM tokens**, no ElevenLabs, no network TTS.
-
-## Architecture
-
-See [docs/architecture.md](docs/architecture.md).
-
-High level: `extensions/voice.ts` → `VoiceSession` → capture / Whisper / Piper|Kokoro / PipeWire playback.
-
-Streaming TTS uses **Strategy B**: group ~2–3 short sentences (or ~140+ chars) per speak unit for less choppy prosody, while long sentences flush alone for first-audio latency.
+Full matrix: `lib/runtime/compat-matrix.ts` and `/gentle:voice setup`.
 
 ## Privacy & cost
 
-- Default path is **local** STT/TTS (no cloud required).
-- ElevenLabs is design-only in this repo (budget helpers); do **not** enable remote TTS without reviewing cost and data retention of that provider.
-- Do not commit `.env`, WAVs, transcripts, or model binaries (see `.gitignore`).
+- Default path is **local** STT/TTS (no cloud required for voice).
+- Uses the model you already configured in Pi / Gentle Shell for agent replies.
+- Temp WAV/PCM under the private cache; cleaned after use when adapters allow.
+- No ElevenLabs dependency for core mode.
 
-## Platform limits
+## Development
 
-| OS | Status |
-| --- | --- |
-| Linux (PipeWire) | Supported lab target |
-| Windows | Not implemented / not tested |
-| macOS | Not implemented / not tested |
+```bash
+git clone https://github.com/efolchmontiel/gentle-voice.git
+cd gentle-voice
+pnpm install   # or npm install
+pnpm test
+pnpm typecheck
+npm pack --dry-run
+```
+
+## Uninstall
+
+```bash
+pi remove npm:gentle-voice
+# optional: delete the private data dir shown by /gentle:voice config
+```
+
+Does not remove Whisper/Piper copies you installed yourself outside Gentle Voice’s data dir.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Engine models (Whisper, Piper, Kokoro) keep **their own** upstream licenses; this repo does not redistribute those binaries.
+MIT — see [LICENSE](LICENSE). Engine models and voices keep **their own** upstream licenses; this package does not redistribute those binaries in the npm tarball.

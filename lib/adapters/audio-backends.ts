@@ -47,8 +47,8 @@ export const AUDIO_BACKEND_CATALOG: readonly AudioBackendSpec[] = Object.freeze(
 		role: "capture" as const,
 		platforms: ["linux"] as const,
 		displayName: "PipeWire (pw-record / portal)",
-		verifiedOn: [] as const,
-		notes: "Planned Linux capture; not implemented yet.",
+		verifiedOn: ["linux"] as const,
+		notes: "Linux lab: pw-record + energy VAD (experimental, not universal distro claim).",
 	}),
 	Object.freeze({
 		id: "linux-pulse" as const,
