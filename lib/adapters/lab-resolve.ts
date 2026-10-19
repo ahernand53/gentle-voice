@@ -33,6 +33,11 @@ import {
 import { DEFAULT_WHISPER_INITIAL_PROMPT } from "../stt/corrections.ts";
 import { resolveRuntimeLayout } from "../runtime/paths.ts";
 import { resolveVoiceAdapters, type VoiceAdapterBundle } from "./platform.ts";
+import {
+	createOsFfmpegCaptureAdapter,
+	createOsFfmpegPlaybackAdapter,
+	findFfmpeg,
+} from "./os-audio.ts";
 
 function exeSync(path: string): boolean {
 	try {
@@ -130,10 +135,10 @@ function resolveWhisperFromRuntimeOrLab(config?: VoiceConfig): {
 
 export interface LabResolveResult {
 	readonly bundle: VoiceAdapterBundle;
-	readonly captureKind: "pipewire" | "stub";
+	readonly captureKind: "pipewire" | "ffmpeg" | "stub";
 	readonly sttKind: "whisper" | "stub";
 	readonly ttsKind: "piper" | "kokoro" | "stub";
-	readonly playbackKind: "pipewire" | "stub";
+	readonly playbackKind: "pipewire" | "ffmpeg" | "stub";
 	readonly whisperCli?: string;
 	readonly modelPath?: string;
 	readonly piperPath?: string;
@@ -153,13 +158,13 @@ export function resolveLabVoiceAdapters(options?: {
 	const tmpDir = resolveTmpDir(options);
 
 	let capture: CaptureAdapter = createStubCaptureAdapter();
-	let captureKind: "pipewire" | "stub" = "stub";
+	let captureKind: "pipewire" | "ffmpeg" | "stub" = "stub";
 	let stt: SttAdapter = createStubSttAdapter();
 	let sttKind: "whisper" | "stub" = "stub";
 	let tts: TtsAdapter = createStubTtsAdapter();
 	let ttsKind: "piper" | "kokoro" | "stub" = "stub";
 	let playback: PlaybackAdapter = createStubPlaybackAdapter();
-	let playbackKind: "pipewire" | "stub" = "stub";
+	let playbackKind: "pipewire" | "ffmpeg" | "stub" = "stub";
 	let whisperCli: string | undefined;
 	let modelPath: string | undefined;
 	let piperPath: string | undefined;
@@ -194,6 +199,17 @@ export function resolveLabVoiceAdapters(options?: {
 					keepTemp: false,
 				});
 				playbackKind = "pipewire";
+			}
+		} else if (platform === "win32" || platform === "darwin") {
+			// Portable ffmpeg WASAPI / AVFoundation path (degraded until hardware smoke).
+			if (findFfmpeg()) {
+				const behavior = options?.config?.behavior;
+				capture = createOsFfmpegCaptureAdapter({
+					maxListenMs: behavior?.maxListenMs ?? 60_000,
+				});
+				playback = createOsFfmpegPlaybackAdapter();
+				captureKind = "ffmpeg";
+				playbackKind = "ffmpeg";
 			}
 		}
 

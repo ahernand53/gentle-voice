@@ -235,26 +235,96 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 		engines: { ...DEFAULT_VOICE_CONFIG.engines, language: "es" },
 		behavior: { ...DEFAULT_VOICE_CONFIG.behavior, autoSubmitTranscript: false },
 	};
-	const useRealAudio =
-		options.forceStubAdapters === false
-		|| (options.forceStubAdapters !== true
-			&& !options.session
-			&& process.env.GENTLE_VOICE_REAL_AUDIO === "1");
+	// Product default: real adapters. node:test sets NODE_TEST_CONTEXT → stubs unless forced.
+	const underNodeTest = Boolean(process.env.NODE_TEST_CONTEXT);
+	const useRealAudio = options.forceStubAdapters === true
+		? false
+		: options.forceStubAdapters === false
+			? true
+			: options.session
+				? false
+				: underNodeTest
+					? false
+					: true;
 
 	const replyTracker = new AgentReplyTracker();
 	let vadFinish: (() => void) | undefined;
 	let abSession: AbCompareSession | undefined;
+	let firstRunDone = false;
+	let firstRunPromise: Promise<void> | undefined;
 
-	const lab = resolveLabVoiceAdapters({
+	const attachVad = () => {
+		vadFinish = () => {
+			void session.finishListen().then(() => {
+				if (lastCtx) updateChrome(lastCtx, session);
+			});
+		};
+	};
+
+	let resolved = resolveLabVoiceAdapters({
 		config,
 		forceStub: !useRealAudio,
 		onVadEnd: () => {
 			vadFinish?.();
 		},
 	});
-	const adapters = lab.bundle;
+	let adapters = resolved.bundle;
 	let session: VoiceSession;
 	let lastCtx: VoiceHostCommandContext | undefined;
+
+	const rebindAdaptersFromRuntime = () => {
+		if (!useRealAudio) return;
+		resolved = resolveLabVoiceAdapters({
+			config: session.config,
+			forceStub: false,
+			onVadEnd: () => {
+				vadFinish?.();
+			},
+		});
+		adapters = resolved.bundle;
+		session.deps.capture = adapters.capture;
+		session.deps.stt = adapters.stt;
+		session.deps.tts = adapters.tts;
+		session.deps.playback = adapters.playback;
+	};
+
+	const ensureAutomaticFirstRun = (ctx: VoiceHostCommandContext): Promise<void> => {
+		if (!useRealAudio || options.session) return Promise.resolve();
+		if (firstRunDone) return Promise.resolve();
+		if (firstRunPromise) return firstRunPromise;
+		firstRunPromise = (async () => {
+			const uiConfirm = (ctx.ui as unknown as {
+				confirm?: (t: string, m: string) => Promise<boolean>;
+			}).confirm;
+			const snap = await runFirstRunPreparation({
+				notify: (message, level) => {
+					try {
+						ctx.ui.notify(message, level ?? "info");
+					} catch {
+						/* ignore */
+					}
+				},
+				...(typeof uiConfirm === "function"
+					? { confirm: (title: string, message: string) => uiConfirm(title, message) }
+					: {}),
+			});
+			firstRunDone = true;
+			if (snap.status === "ready" || snap.status === "partial") {
+				rebindAdaptersFromRuntime();
+			}
+		})().catch((error) => {
+			firstRunDone = true;
+			try {
+				ctx.ui.notify(
+					`Gentle Voice setup failed: ${error instanceof Error ? error.message : String(error)}`,
+					"warning",
+				);
+			} catch {
+				/* ignore */
+			}
+		});
+		return firstRunPromise;
+	};
 
 	session = options.session ?? new VoiceSession({
 		config,
@@ -289,11 +359,7 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 			}
 		},
 	});
-	vadFinish = () => {
-		void session.finishListen().then(() => {
-			if (lastCtx) updateChrome(lastCtx, session);
-		});
-	};
+	attachVad();
 	// Injected sessions (tests) still need live chrome refresh during PCM/TTS.
 	session.deps.onChromeUpdate = () => {
 		if (lastCtx) updateChrome(lastCtx, session);
@@ -339,6 +405,7 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 		probe: shortcutProbe,
 		handler: async (ctx) => {
 			lastCtx = ctx as VoiceHostCommandContext;
+			await ensureAutomaticFirstRun(lastCtx);
 			const fluent = session.config.behavior.fluentConversation;
 			const lab = isGentleVoiceLabMode();
 
@@ -429,6 +496,7 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 		handler: async (args, ctx) => {
 			lastCtx = ctx;
 			attachEscape(ctx);
+			await ensureAutomaticFirstRun(ctx);
 			const parsed = parseVoiceArgs(args);
 			if (parsed.error) {
 				ctx.ui.notify(parsed.error, "warning");
@@ -507,27 +575,27 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 				const eng = parsed.rest.trim().toLowerCase();
 				if (eng !== "piper" && eng !== "kokoro") {
 					ctx.ui.notify(
-						`Usage: /gentle:voice tts piper|kokoro\nactive=${lab.ttsKind} kokoroReady=${lab.kokoroReady}`,
+						`Usage: /gentle:voice tts piper|kokoro\nactive=${resolved.ttsKind} kokoroReady=${resolved.kokoroReady}`,
 						"warning",
 					);
 					return;
 				}
 				if (eng === "kokoro") {
-					if (!lab.kokoroAdapter) {
+					if (!resolved.kokoroAdapter) {
 						ctx.ui.notify("Kokoro not installed in WD-Black lab.", "warning");
 						return;
 					}
-					session.deps.tts = lab.kokoroAdapter;
+					session.deps.tts = resolved.kokoroAdapter;
 					ctx.ui.notify(
 						"TTS engine → kokoro (session). Applies to agent spoken replies and test-speak. Default install remains Piper until you switch.",
 						"info",
 					);
 				} else {
-					if (!lab.piperAdapter) {
+					if (!resolved.piperAdapter) {
 						ctx.ui.notify("Piper not available.", "warning");
 						return;
 					}
-					session.deps.tts = lab.piperAdapter;
+					session.deps.tts = resolved.piperAdapter;
 					ctx.ui.notify("TTS engine → piper (session). Applies to agent spoken replies and test-speak.", "info");
 				}
 				updateChrome(ctx, session);
@@ -556,21 +624,21 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 					return;
 				}
 				if (engineHint === "kokoro" || engineHint === "piper") {
-					if (engineHint === "kokoro" && lab.kokoroAdapter) session.deps.tts = lab.kokoroAdapter;
-					else if (engineHint === "piper" && lab.piperAdapter) session.deps.tts = lab.piperAdapter;
+					if (engineHint === "kokoro" && resolved.kokoroAdapter) session.deps.tts = resolved.kokoroAdapter;
+					else if (engineHint === "piper" && resolved.piperAdapter) session.deps.tts = resolved.piperAdapter;
 					else {
 						ctx.ui.notify(`Engine "${engineHint}" not installed.`, "warning");
 						return;
 					}
 				}
 				const candidateSlots = [];
-				if (lab.piperAdapter) {
-					candidateSlots.push(piperSlotFromAdapter(lab.piperAdapter, {
+				if (resolved.piperAdapter) {
+					candidateSlots.push(piperSlotFromAdapter(resolved.piperAdapter, {
 						id: "piper-es-AR-daniela-high",
-						notes: lab.piperVoice ?? "lab piper",
+						notes: resolved.piperVoice ?? "lab piper",
 					}));
 				}
-				if (lab.kokoroAdapter) {
+				if (resolved.kokoroAdapter) {
 					candidateSlots.push({
 						info: {
 							id: "kokoro-ef-dora",
@@ -581,7 +649,7 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 							licenseHint: "Apache-2.0",
 							notes: "Lab WD-Black ONNX quantized + ef_dora only",
 						},
-						adapter: lab.kokoroAdapter,
+						adapter: resolved.kokoroAdapter,
 					});
 				}
 				const installed = await listInstalledTtsSlots(candidateSlots);
@@ -746,8 +814,8 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 					const setup = await beginSetup({
 						probe: options.engineProbe ?? createFilesystemEngineProbe(),
 					});
-					const whisperHint = lab.sttKind === "whisper"
-						? `Whisper operational (lab:${lab.whisperCli ?? "path"})`
+					const whisperHint = resolved.sttKind === "whisper"
+						? `Whisper operational (lab:${resolved.whisperCli ?? "path"})`
 						: setup.report.message;
 					const selected = session.config.engines.tts || "(auto)";
 					const activeId = session.deps.tts.id;
@@ -759,11 +827,11 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 						`stt=${probe.stt}`,
 						`tts=${probe.tts}`,
 						`playback=${probe.playback}`,
-						`lab.capture=${lab.captureKind}`,
-						`lab.stt=${lab.sttKind}`,
-						`lab.tts=${lab.ttsKind}`,
-						`lab.playback=${lab.playbackKind}`,
-						`kokoroReady=${lab.kokoroReady}`,
+						`lab.capture=${resolved.captureKind}`,
+						`lab.stt=${resolved.sttKind}`,
+						`lab.tts=${resolved.ttsKind}`,
+						`lab.playback=${resolved.playbackKind}`,
+						`kokoroReady=${resolved.kokoroReady}`,
 						`tts.selected=${selected}`,
 						`tts.activeAdapter=${activeId}`,
 						`tts.lastSynthesize=${lastSynth}`,
@@ -852,9 +920,17 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 	// Pi 1.2 lifecycle: message lives on turn_end / agent_end; agent_settled is {aborted} only.
 	// Streaming: message_update.assistantMessageEvent.text_delta (confirmed in Pi/GS protocol).
 	if (typeof pi.on === "function") {
+		// First-run on host session start — no mandatory /gentle:voice setup.
+		pi.on("session_start", (_event, ctx) => {
+			lastCtx = ctx as VoiceHostCommandContext;
+			attachEscape(lastCtx);
+			void ensureAutomaticFirstRun(lastCtx);
+			updateChrome(lastCtx, session);
+		});
 		pi.on("agent_start", (_event, ctx) => {
 			lastCtx = ctx as VoiceHostCommandContext;
 			attachEscape(lastCtx);
+			void ensureAutomaticFirstRun(lastCtx);
 			if (!session.state.enabled) return;
 			// Edit → Enter uses native Pi send; correlate so spoken reply still works.
 			if (session.editHold) {

@@ -30,7 +30,7 @@ export const COMPAT_MATRIX: readonly CompatCell[] = Object.freeze([
 		hostPi: "experimental" as const,
 		hostGentleShell: "experimental" as const,
 		notes:
-			"PipeWire + pinned Whisper/Piper downloads. Lab conversation exercised; clean-HOME auto-download path implemented — re-verify after merge.",
+			"Clean-HOME tarball smoke: auto-download + SHA-256 + Piper/Whisper round-trip + Pi extension load OK. Capture/playback via PipeWire; full consecutive conversation still experimental until more field runs.",
 	}),
 	Object.freeze({
 		platform: "linux" as const,
@@ -53,7 +53,7 @@ export const COMPAT_MATRIX: readonly CompatCell[] = Object.freeze([
 		hostPi: "planned" as const,
 		hostGentleShell: "planned" as const,
 		notes:
-			"Whisper/Piper Windows binaries pinned. WASAPI adapters not smoke-tested — do not claim conversation support.",
+			"Whisper/Piper Windows binaries pinned. ffmpeg WASAPI capture/playback adapters exist but NOT hardware-smoke-tested — conversation support not claimed.",
 	}),
 	Object.freeze({
 		platform: "darwin" as const,

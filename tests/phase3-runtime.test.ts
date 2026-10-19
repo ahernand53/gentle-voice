@@ -108,6 +108,20 @@ test("3 first-run dirs created under private home only", async () => {
 	assert.ok(layout.modelsDir.startsWith(root));
 });
 
+test("3.2 paths: GENTLE_VOICE_HOME nests cache (ignores external lab CACHE)", () => {
+	const root = "/tmp/gv-private-home";
+	const layout = resolveRuntimeLayout(
+		{
+			GENTLE_VOICE_HOME: root,
+			GENTLE_VOICE_CACHE: "/home/erickfm/WD-Black/gentle-voice/cache",
+			HOME: "/tmp/other",
+		},
+		"linux",
+	);
+	assert.equal(layout.cacheDir, `${root}/cache`);
+	assert.ok(!layout.cacheDir.includes("WD-Black"));
+});
+
 test("3.1 detectArch", () => {
 	assert.ok(["x64", "arm64", "other"].includes(detectArch()));
 });
