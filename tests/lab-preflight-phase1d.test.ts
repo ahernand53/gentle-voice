@@ -3,6 +3,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { skipWithoutLab } from "./lab-env.ts";
 import { mkdir, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -26,12 +27,12 @@ test("real: NO_AUTO_SETUP alone does not imply companion will not install", asyn
 	await rm(root, { recursive: true, force: true });
 });
 
-test("real: gs-lab companion already present → wouldInstall false", async () => {
+test("real: gs-lab companion already present → wouldInstall false", { skip: skipWithoutLab }, async () => {
 	const paths = defaultLabPaths();
 	assert.equal(await wouldInstallEngramCompanion(paths.labHome), false);
 });
 
-test("real: experimental GS resolves pi-pretty after local pnpm install", async () => {
+test("real: experimental GS resolves pi-pretty after local pnpm install", { skip: skipWithoutLab }, async () => {
 	const paths = defaultLabPaths();
 	const ok = await isPiPrettyResolvable(paths.experimentalGs);
 	assert.equal(ok, true);
@@ -49,7 +50,7 @@ test("simulated: recommended patch adds codemode opt-out and engram pin", () => 
 	assert.ok(hasBuiltinCodemodeOptOut(patch.extensions));
 });
 
-test("real: preflight experimental-gs passes when pi-pretty + companion + codemode ready", async () => {
+test("real: preflight experimental-gs passes when pi-pretty + companion + codemode ready", { skip: skipWithoutLab }, async () => {
 	const report = await runLabPreflight({
 		paths: defaultLabPaths(),
 		mode: "experimental-gs",
@@ -86,7 +87,7 @@ test("simulated: preflight fails closed when pi-pretty unresolved", async () => 
 	);
 });
 
-test("real: preflight installed-gs-voice-only can pass when companion+codemode ok", async () => {
+test("real: preflight installed-gs-voice-only can pass when companion+codemode ok", { skip: skipWithoutLab }, async () => {
 	const report = await runLabPreflight({
 		paths: defaultLabPaths(),
 		mode: "installed-gs-voice-only",

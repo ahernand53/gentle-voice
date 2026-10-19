@@ -3,6 +3,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { skipWithoutLab } from "./lab-env.ts";
 import { isWavBuffer } from "../lib/adapters/wav.ts";
 import {
 	createPiperTtsAdapter,
@@ -76,7 +77,7 @@ test("lab: test-speak accepted when GENTLE_VOICE_LAB=1", () => {
 	}
 });
 
-test("real: Piper synthesizes WAV for fixed Spanish phrase", async () => {
+test("real: Piper synthesizes WAV for fixed Spanish phrase", { skip: skipWithoutLab }, async () => {
 	const tts = createPiperTtsAdapter({
 		...LAB_PIPER_DEFAULTS,
 		dryRun: false,
@@ -98,7 +99,7 @@ test("real: Piper synthesizes WAV for fixed Spanish phrase", async () => {
 	assert.ok(wall < 60_000);
 });
 
-test("real: PipeWire playback availability + cancel before finish", async () => {
+test("real: PipeWire playback availability + cancel before finish", { skip: skipWithoutLab }, async () => {
 	const play = createPipewirePlaybackAdapter({
 		tmpDir: join(tmpdir(), "gv-phase2b-play"),
 	});
@@ -289,7 +290,7 @@ test("isolation: test-speak extension path does not call sendUserMessage", async
 	}
 });
 
-test("real: lab resolve wires piper + pipewire playback under REAL_AUDIO", () => {
+test("real: lab resolve wires piper + pipewire playback under REAL_AUDIO", { skip: skipWithoutLab }, () => {
 	const prev = process.env.GENTLE_VOICE_REAL_AUDIO;
 	process.env.GENTLE_VOICE_REAL_AUDIO = "1";
 	try {

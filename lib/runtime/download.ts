@@ -19,6 +19,18 @@ export class DownloadError extends Error {
 	}
 }
 
+/** rename() fails with EXDEV across mount points — fall back to copy+unlink. */
+async function moveFile(from: string, to: string): Promise<void> {
+	try {
+		await rename(from, to);
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException)?.code;
+		if (code !== "EXDEV") throw error;
+		await copyFile(from, to);
+		await rm(from, { force: true });
+	}
+}
+
 async function exists(path: string): Promise<boolean> {
 	try {
 		await access(path, constants.F_OK);
@@ -121,7 +133,7 @@ export async function installArtifact(
 		await downloadToFile(art.url, staging);
 		await verifySha256(staging, art.sha256);
 		await mkdir(dirname(finalPath), { recursive: true });
-		await rename(staging, finalPath);
+		await moveFile(staging, finalPath);
 		return { path: finalPath };
 	}
 

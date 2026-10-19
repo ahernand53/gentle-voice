@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { appendFile, mkdir, readFile, access, constants } from "node:fs/promises";
+import { readFile, access, constants } from "node:fs/promises";
 import { createVoiceExtension, VOICE_WIDGET_KEY } from "../extensions/voice.ts";
 import { createPiHostHarness } from "../lib/lab/pi-host-harness.ts";
 import { collectShortcutConflictEvidence } from "../lib/lab/shortcut-conflicts.ts";
@@ -44,12 +44,10 @@ import { VOICE_COMMAND } from "../lib/commands.ts";
 import { createFakeProcess, CancellationBag, AbortError } from "../lib/process-cancel.ts";
 import { ADAPTER_READY_ENGINES } from "../lib/engines/probe-fs.ts";
 import { resolveVoiceAdapters } from "../lib/adapters/platform.ts";
-
-const LAB_LOG = "/home/erickfm/D-SSD/personal/gs-lab/logs/phase1c-access.log";
+import { appendLabLog, skipWithoutLab } from "./lab-env.ts";
 
 async function labLog(line: string): Promise<void> {
-	await mkdir("/home/erickfm/D-SSD/personal/gs-lab/logs", { recursive: true });
-	await appendFile(LAB_LOG, `${new Date().toISOString()} ${line}\n`);
+	await appendLabLog("phase1c-access.log", line);
 }
 
 test("simulated: TUI command+widget lifecycle and cleanup", async () => {
@@ -124,7 +122,7 @@ test("simulated: Ctrl+Alt+Space remains fail-closed; GS defaults do not claim it
 	await labLog("shortcut: fail-closed default; lab double-gate works in harness only");
 });
 
-test("real: Piper CLI + daniela voice reusable; dry-run adapter ready", async () => {
+test("real: Piper CLI + daniela voice reusable; dry-run adapter ready", { skip: skipWithoutLab }, async () => {
 	await access(LAB_PIPER_DEFAULTS.piperPath, constants.X_OK);
 	await access(LAB_PIPER_DEFAULTS.voiceModelPath, constants.R_OK);
 	await access(LAB_PIPER_DEFAULTS.voiceConfigPath, constants.R_OK);
@@ -147,7 +145,7 @@ test("real: Piper CLI + daniela voice reusable; dry-run adapter ready", async ()
 	await labLog(`piper: ready dry-run path=${LAB_PIPER_DEFAULTS.piperPath}`);
 });
 
-test("real: Voxtype ggml-small magic compatible; whisper-cli ready under WD-Black", async () => {
+test("real: Voxtype ggml-small magic compatible; whisper-cli ready under WD-Black", { skip: skipWithoutLab }, async () => {
 	const magic = await readGgmlMagic(LAB_VOXTYPE_GGML_SMALL);
 	assert.ok(magic);
 	assert.ok(magic.magic === "ggml" || magic.magic === "lmgg");
@@ -167,7 +165,7 @@ test("real: Voxtype ggml-small magic compatible; whisper-cli ready under WD-Blac
 	await labLog(`whisper-model: ok magic=${magic.magic} bytes=${magic.bytes}; cli_ready`);
 });
 
-test("consent: whisper.cpp install requirements exact (not executed)", async () => {
+test("consent: whisper.cpp install requirements exact (not executed)", { skip: skipWithoutLab }, async () => {
 	const consent = buildWhisperInstallConsent({ arch: "x86_64" });
 	assert.equal(consent.authorized, false);
 	assert.equal(consent.candidate.assetName, WHISPER_UBUNTU_X64_B5454.assetName);
@@ -179,11 +177,7 @@ test("consent: whisper.cpp install requirements exact (not executed)", async () 
 	assert.match(text, /NOT AUTHORIZED/);
 	assert.match(text, /WD-Black\/gentle-voice/);
 
-	await mkdir("/home/erickfm/D-SSD/personal/gs-lab/logs", { recursive: true });
-	await appendFile(
-		"/home/erickfm/D-SSD/personal/gs-lab/logs/phase1c-whisper-consent.txt",
-		`${text}\n`,
-	);
+	await appendLabLog("phase1c-whisper-consent.txt", text);
 	await labLog("whisper-consent: written; install not executed");
 });
 
@@ -220,7 +214,7 @@ test("cancellation: bag aborts and fake process honors signal", async () => {
 	);
 });
 
-test("isolation: gs-lab paths used; global GS settings untouched by this suite", async () => {
+test("isolation: gs-lab paths used; global GS settings untouched by this suite", { skip: skipWithoutLab }, async () => {
 	const globalSettings = "/home/erickfm/.gentle-shell/gentle-ai/settings.json";
 	let before: string | undefined;
 	try {

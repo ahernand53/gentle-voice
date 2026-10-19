@@ -3,6 +3,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { skipWithoutLab } from "./lab-env.ts";
 import {
 	AgentReplyTracker,
 	asAssistantMessage,
@@ -110,7 +111,7 @@ test("2C.1: energy VAD ends after speech then hang silence", () => {
 	assert.equal(vad.state.phase, "ended");
 });
 
-test("2C.1: filesystem probe finds lab whisper-cli under WD-Black", async () => {
+test("2C.1: filesystem probe finds lab whisper-cli under WD-Black", { skip: skipWithoutLab }, async () => {
 	await access(LAB_WHISPER_CLI_CANDIDATE, constants.X_OK);
 	const setup = await beginSetup({ probe: createFilesystemEngineProbe() });
 	const whisper = setup.report.stt.find((e) => e.spec.id === "whisper-cpp");

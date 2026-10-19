@@ -16,6 +16,10 @@ import { artifactsFor, detectArch } from "../lib/runtime/artifacts.ts";
 import { parseVoiceArgs } from "../lib/commands.ts";
 import { verifySha256 } from "../lib/runtime/download.ts";
 
+function posix(p: string): string {
+	return p.replace(/\\/g, "/");
+}
+
 test("3 paths: linux XDG layout under HOME", () => {
 	const layout = resolveRuntimeLayout(
 		{
@@ -26,10 +30,10 @@ test("3 paths: linux XDG layout under HOME", () => {
 		},
 		"linux",
 	);
-	assert.equal(layout.dataDir, "/tmp/gv-home-test/.local/share/gentle-voice");
-	assert.equal(layout.configDir, "/tmp/gv-home-test/.config/gentle-voice");
-	assert.match(layout.modelsDir, /models$/);
-	assert.match(layout.binDir, /bin$/);
+	assert.equal(posix(layout.dataDir), "/tmp/gv-home-test/.local/share/gentle-voice");
+	assert.equal(posix(layout.configDir), "/tmp/gv-home-test/.config/gentle-voice");
+	assert.match(posix(layout.modelsDir), /models$/);
+	assert.match(posix(layout.binDir), /bin$/);
 });
 
 test("3 paths: win32 LocalAppData", () => {
@@ -48,10 +52,10 @@ test("3 paths: win32 LocalAppData", () => {
 test("3 paths: darwin Application Support", () => {
 	const layout = resolveRuntimeLayout({ HOME: "/Users/test" }, "darwin");
 	assert.equal(
-		layout.dataDir,
+		posix(layout.dataDir),
 		"/Users/test/Library/Application Support/gentle-voice",
 	);
-	assert.match(layout.cacheDir, /Caches\/gentle-voice$/);
+	assert.match(posix(layout.cacheDir), /Caches\/gentle-voice$/);
 });
 
 test("3.1 artifacts: linux x64 catalog is fully pinned", () => {
@@ -106,6 +110,20 @@ test("3 first-run dirs created under private home only", async () => {
 	const layout = resolveRuntimeLayout({ GENTLE_VOICE_HOME: root }, "linux");
 	assert.equal(layout.home, root);
 	assert.ok(layout.modelsDir.startsWith(root));
+});
+
+test("3.2 paths: GENTLE_VOICE_HOME nests cache (ignores external lab CACHE)", () => {
+	const root = "/tmp/gv-private-home";
+	const layout = resolveRuntimeLayout(
+		{
+			GENTLE_VOICE_HOME: root,
+			GENTLE_VOICE_CACHE: "/home/erickfm/WD-Black/gentle-voice/cache",
+			HOME: "/tmp/other",
+		},
+		"linux",
+	);
+	assert.equal(posix(layout.cacheDir), `${root}/cache`);
+	assert.ok(!layout.cacheDir.includes("WD-Black"));
 });
 
 test("3.1 detectArch", () => {

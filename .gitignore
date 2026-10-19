@@ -4,6 +4,7 @@ dist/
 *.tsbuildinfo
 coverage/
 .pnpm-store/
+*.tgz
 
 # Secrets & credentials
 .env

@@ -49,9 +49,15 @@ export function resolveRuntimeLayout(
 	let cacheDir: string;
 
 	if (homeOverride) {
+		// Private install root: keep cache/tmp inside it so ambient lab
+		// GENTLE_VOICE_CACHE (e.g. WD-Black) cannot leak across devices.
 		dataDir = homeOverride;
 		configDir = join(homeOverride, "config");
-		cacheDir = cacheOverride || join(homeOverride, "cache");
+		const nestedCache = join(homeOverride, "cache");
+		cacheDir =
+			cacheOverride && cacheOverride.startsWith(homeOverride)
+				? cacheOverride
+				: nestedCache;
 	} else if (platform === "win32") {
 		const local = env.LOCALAPPDATA?.trim() || join(userHome, "AppData", "Local");
 		const roaming = env.APPDATA?.trim() || join(userHome, "AppData", "Roaming");

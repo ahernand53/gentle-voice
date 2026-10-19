@@ -3,6 +3,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { skipWithoutLab } from "./lab-env.ts";
 import { access, constants } from "node:fs/promises";
 import {
 	AB_COMPARE_PHRASES,
@@ -47,7 +48,7 @@ test("2C.3: regression — 2+2 primary in spoken+normalized text", () => {
 	assert.match(result.text, /dos más dos son cuatro/i);
 });
 
-test("2C.3: lab Kokoro artifacts present (hardware install)", async () => {
+test("2C.3: lab Kokoro artifacts present (hardware install)", { skip: skipWithoutLab }, async () => {
 	assert.equal(labKokoroPresent(), true);
 	await access(LAB_KOKORO_MODEL, constants.R_OK);
 	await access(LAB_KOKORO_VOICES, constants.R_OK);
