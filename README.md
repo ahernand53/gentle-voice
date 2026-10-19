@@ -1,6 +1,15 @@
+<div align="center">
+  <img src="assets/gentle-logo-only.png" alt="Gentle AI logo" width="132" />
+
 # Gentle Voice
 
-Local voice conversation extension for **Pi Coding Agent** (STT + TTS).
+**Local voice conversation for Pi Coding Agent (STT + TTS).**
+
+[![Built for Pi](https://img.shields.io/badge/built%20for-Pi-6f42c1)](https://github.com/badlogic/pi-mono)
+[![Gentle Shell](https://img.shields.io/badge/works%20with-gentle--shell-22c55e)](https://github.com/Gentleman-Programming/gentle-shell)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+</div>
 
 Gentle Shell is **not** required. It is only an optional compatibility test host.
 
