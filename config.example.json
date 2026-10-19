@@ -1,0 +1,26 @@
+{
+	"schema": "gentle-voice.config/v1",
+	"enabled": false,
+	"paths": {},
+	"engines": {
+		"stt": "whisper-cpp",
+		"tts": "piper",
+		"capture": "auto",
+		"playback": "auto",
+		"sttModel": "whisper/ggml-base.bin",
+		"ttsVoice": "piper/en_US-lessac-medium.onnx",
+		"language": "auto"
+	},
+	"behavior": {
+		"mode": "conversation",
+		"muted": false,
+		"silenceMs": 1200,
+		"maxListenMs": 60000,
+		"maxSpokenSentences": 3,
+		"maxSpokenChars": 480,
+		"speakWarnings": true,
+		"visualWaves": true,
+		"visualFps": 12
+	}
+}
+

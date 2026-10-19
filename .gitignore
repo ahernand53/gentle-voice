@@ -1,0 +1,66 @@
+# Dependencies & build
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+.pnpm-store/
+
+# Secrets & credentials
+.env
+.env.*
+!.env.example
+auth.json
+**/auth.json
+*.pem
+*.key
+*credentials*
+*secret*
+
+# Logs & debug
+*.log
+logs/
+tmp/
+.cache/
+.turbo/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Audio captures & lab artifacts (never commit)
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.pcm
+captures/
+recordings/
+transcripts/
+private/
+
+# Models & voices (large binaries — install locally)
+models/
+*.ggml
+*.gguf
+*.onnx
+*.npz
+*.bin
+!fixtures/**/*.md
+
+# Python / virtualenvs (Kokoro lab)
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# External lab trees (never copy into this repo)
+gs-lab/
+WD-Black/
+
+# Local config overrides
+config.local.json
+*.local.json

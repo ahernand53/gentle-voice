@@ -1,0 +1,57 @@
+{
+	"name": "gentle-voice",
+	"version": "0.0.0",
+	"description": "Local voice conversation extension for Pi Coding Agent (STT/TTS, portable, no Gentle Shell hard dependency).",
+	"license": "MIT",
+	"type": "module",
+	"keywords": [
+		"pi-package",
+		"pi",
+		"pi-coding-agent",
+		"gentle-voice",
+		"speech",
+		"stt",
+		"tts"
+	],
+	"files": [
+		"assets/",
+		"docs/",
+		"extensions/",
+		"lib/",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"test": "node --experimental-strip-types --test tests/*.test.ts",
+		"typecheck": "tsc --noEmit -p tsconfig.json"
+	},
+	"pi": {
+		"extensions": [
+			"./extensions"
+		]
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": ">=1.2.0",
+		"@earendil-works/pi-tui": "*",
+		"typebox": "*"
+	},
+	"peerDependenciesMeta": {
+		"@earendil-works/pi-coding-agent": {
+			"optional": true
+		},
+		"@earendil-works/pi-tui": {
+			"optional": true
+		},
+		"typebox": {
+			"optional": true
+		}
+	},
+	"devDependencies": {
+		"@types/node": "^24.13.3",
+		"typescript": "^5.9.3"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"packageManager": "pnpm@11.1.1"
+}
