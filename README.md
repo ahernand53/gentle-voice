@@ -14,7 +14,7 @@
 
 Speak with your already-authenticated Pi / Gentle Shell model. Gentle Voice runs **local** speech-to-text and text-to-speech. It does **not** require OpenAI, ElevenLabs, or a second login.
 
-> **Status:** `0.1.0` — installable on Linux (experimental). **Windows and macOS are not supported** until real hardware smoke tests pass.  
+> **Status:** `0.1.0` on npm (`0.1.1` prepares Gentle Shell isolation). Linux experimental. **Windows and macOS are not supported** until real hardware smoke tests pass.  
 > An npm publish does **not** mean universal OS compatibility.
 
 ## Requirements
@@ -47,8 +47,8 @@ Restart Pi / Gentle Shell after install.
 ### First run (automatic)
 
 1. Start Pi / Gentle Shell — on `session_start` (and on first `/gentle:voice` / shortcut), Gentle Voice checks readiness.
-2. If STT/TTS artifacts are missing, the host shows a consent dialog (licenses + size). Accept to download into the **private** data dir (XDG / LocalAppData / Application Support). No sudo, no PATH mutation, no Python/compiler required.
-3. `/gentle:voice setup` remains for **diagnostics / repair / manual** re-consent — it is **not** required for first use.
+2. If STT/TTS artifacts are missing, the host shows a consent dialog (licenses + size). Accept to download into the **private** data dir. In Gentle Shell isolated/bundled that is `<prefix>/gentle-voice/`; in standalone Pi it is XDG / LocalAppData / Application Support. No sudo, no PATH mutation, no Python/compiler required.
+3. `/gentle:voice setup` remains for **diagnostics / repair / manual** re-consent — it is **not** required for first use. `/gentle:voice storage` shows the resolved host + paths.
 4. Non-interactive automation only: `GENTLE_VOICE_AUTO_DOWNLOAD=1` (after reviewing licenses). Opt-out: `GENTLE_VOICE_DISABLE_DOWNLOADS=1`.
 5. Attribution for the Daniela voice (CC-BY-SA-4.0) is in `THIRD_PARTY_NOTICES.md`.
 
@@ -60,6 +60,7 @@ Restart Pi / Gentle Shell after install.
 | Edit current / last voice line | `Ctrl+Alt+E` or `/gentle:voice edit` |
 | Cancel capture / TTS | `Esc` (when voice is busy) |
 | Setup / readiness | `/gentle:voice setup` |
+| Storage / isolation | `/gentle:voice storage` |
 | Status | `/gentle:voice status` |
 
 Modes: **conversation** (default hands-free path) and **dictation** (review, no auto-send).
@@ -97,10 +98,13 @@ npm pack --dry-run
 
 ```bash
 pi remove npm:gentle-voice
-# optional: delete the private data dir shown by /gentle:voice config
+# or, inside Gentle Shell:
+gentle-shell remove npm:gentle-voice
 ```
 
-Does not remove Whisper/Piper copies you installed yourself outside Gentle Voice’s data dir.
+That removes the package from the agent home. It does **not** delete STT/TTS data.
+
+Optional data cleanup (manual): run `/gentle:voice storage` and delete only the listed private directories (never GS `versions/` / `runtime/`).
 
 ## License
 

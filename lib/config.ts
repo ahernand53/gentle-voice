@@ -297,8 +297,9 @@ export interface ResolvedVoicePaths {
 }
 
 /**
- * Resolve path overrides from env, then config.paths, then portable runtime layout
- * (XDG / LocalAppData / Application Support). Never uses developer lab absolute paths.
+ * Resolve path overrides from env, then config.paths, then host-aware runtime layout
+ * (GS prefix when isolated/bundled; else XDG / LocalAppData / Application Support).
+ * Never uses developer lab absolute paths.
  */
 export function resolveVoicePaths(
 	config: VoiceConfig,

@@ -13,18 +13,34 @@
 ```text
 pi install npm:gentle-voice
 gentle-shell install npm:gentle-voice
-pi install git:github.com/efolchmontiel/gentle-voice@v0.1.0
+pi install git:github.com/efolchmontiel/gentle-voice@v0.1.1
 ```
 
-Target version: **`0.1.0`** on dist-tag **`latest`**.
+Published line: **`0.1.0`** on npm `latest` (live).  
+Prepared next: **`0.1.1`** (GS isolation) — publish only after PR merge + explicit approval.
 
 Historical GitHub tag `v0.1.0-beta.1` is retained; it is not the npm `latest` line.
+
+## Storage layout (phase 3.4)
+
+Detection is **env-only** (what GS/Pi inject). Never scans disk for `~/.gentle-shell` to flip modes.
+
+| Host | Storage root |
+| --- | --- |
+| Pi standalone | XDG / LocalAppData / Application Support `gentle-voice` |
+| GS bundled (`GENTLE_SHELL_PREFIX` + agent under prefix) | `<prefix>/gentle-voice/` |
+| GS isolated (`…/.gentle-shell/agent`) | `…/.gentle-shell/gentle-voice/` |
+| GS `--link` (agent = `GENTLE_SHELL_USER_PI_HOME`) | portable Pi layout |
+| GS `--home` / custom `GENTLE_SHELL_HOME` | `<agentHome>/gentle-voice/` |
+| `GENTLE_VOICE_HOME` set | that path (nested cache) |
+
+Never write into GS `versions/` or `runtime/`. See `/gentle:voice storage`.
 
 ## First-run (automatic)
 
 - Triggered on `session_start`, first `/gentle:voice`, and shortcut — **not** only via `/gentle:voice setup`.
 - Consent UI when the host exposes `ui.confirm`; else `GENTLE_VOICE_AUTO_DOWNLOAD=1` or setup/manual.
-- Artifacts land under `GENTLE_VOICE_HOME` or XDG/LocalAppData/Application Support.
+- Artifacts land under the resolved storage root (GS prefix when isolated/bundled; else XDG / LocalAppData / Application Support).
 - When `GENTLE_VOICE_HOME` is set, cache is nested under that home (ambient lab `GENTLE_VOICE_CACHE` cannot leak).
 
 ## Clean Linux smoke

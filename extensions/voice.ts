@@ -47,6 +47,11 @@ import {
 import { voiceWidgetContent } from "../lib/visual/compact-widget.ts";
 import { runFirstRunPreparation } from "../lib/runtime/first-run.ts";
 import { formatCompatMarkdown } from "../lib/runtime/compat-matrix.ts";
+import {
+	formatStorageDiagnostics,
+	planGentleVoiceDataCleanup,
+	resolveGentleVoiceStorage,
+} from "../lib/runtime/storage.ts";
 
 export { VOICE_STATUS_KEY, VOICE_WIDGET_KEY };
 
@@ -853,6 +858,7 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 				}
 				case "config": {
 					const paths = resolveVoicePaths(session.config);
+					const storage = resolveGentleVoiceStorage();
 					const validation = validateVoiceConfig(session.config);
 					ctx.ui.notify([
 						`schema=${session.config.schema}`,
@@ -862,17 +868,40 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 						`shortcut=${session.config.behavior.shortcut ?? "(none — preferred Ctrl+Alt+Space only if verified)"}`,
 						`engines.stt=${session.config.engines.stt || "(auto)"}`,
 						`engines.tts=${session.config.engines.tts || "(auto)"}`,
+						`hostKind=${storage.hostKind}`,
 						`paths.home=${paths.home}`,
 						`paths.models=${paths.models}`,
 						`paths.cache=${paths.cache}`,
 						`paths.tmp=${paths.tmp}`,
 						`paths.configFile=${paths.configFile}`,
+						`overrides=${storage.activeOverrides.length ? storage.activeOverrides.join(",") : "(none)"}`,
 						`validation=${validation.ok ? "ok" : validation.errors.join("; ")}`,
 						"",
 						`behavior.autoSubmitTranscript=${session.config.behavior.autoSubmitTranscript}`,
 						`pendingDraft=${session.pendingReviewText ? "yes" : "no"}`,
 						"Overrides: GENTLE_VOICE_HOME|MODELS|CACHE|TMP|CONFIG",
 					].join("\n"), "info");
+					break;
+				}
+				case "storage": {
+					const storage = resolveGentleVoiceStorage();
+					const plan = planGentleVoiceDataCleanup(storage);
+					ctx.ui.notify(
+						[
+							formatStorageDiagnostics(storage),
+							"",
+							"Cleanup dry-run (no delete):",
+							`allowed=${plan.allowed}`,
+							...plan.directories.map((d) => `  - ${d}`),
+							plan.reasonsDenied.length
+								? `denied: ${plan.reasonsDenied.join("; ")}`
+								: plan.note,
+							"",
+							"Package uninstall: `pi remove npm:gentle-voice` or `gentle-shell remove npm:gentle-voice`.",
+							"Data cleanup is manual/optional — never automatic.",
+						].join("\n"),
+						"info",
+					);
 					break;
 				}
 				case "setup": {

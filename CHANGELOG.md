@@ -2,6 +2,27 @@
 
 All notable changes to Gentle Voice are documented here.
 
+## [0.1.1] — 2026-10-19
+
+Gentle Shell isolation: private STT/TTS data stays under the GS prefix when the host is bundled/isolated.
+
+### Added
+
+- `resolveGentleVoiceStorage()` — env-only host detection (Pi standalone, GS bundled, GS isolated, `--link`, custom `--home`, explicit overrides).
+- Storage under `<GENTLE_SHELL_PREFIX>/gentle-voice/` (or `~/.gentle-shell/gentle-voice/`) with `bin/`, `models/`, `config/`, `cache/`, `tmp/`, `logs/`.
+- `/gentle:voice storage` — diagnostics + optional data-cleanup dry-run (never deletes automatically).
+- Isolation tests with temporary HOME/prefix sentinels (no real Pi/GS installs touched).
+
+### Changed
+
+- Inside GS isolated/bundled sessions, first-run downloads no longer use ambient `~/.local/share/gentle-voice` / XDG paths (unless `GENTLE_VOICE_*` overrides).
+- `--link` keeps the portable Pi layout (does not treat GS prefix alone as isolation).
+
+### Notes
+
+- Does **not** publish over `0.1.0`; patch `0.1.1` only after PR merge.
+- Windows / macOS remain unsupported pending real hardware smoke.
+
 ## [0.1.0] — 2026-10-19
 
 First stable npm release (`latest`). Linux first-run path is experimental but installable; Windows and macOS are **not** claimed as supported.
