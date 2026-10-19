@@ -31,6 +31,7 @@ import {
 	LAB_WHISPER_CLI_CANDIDATE,
 } from "./whisper-stt.ts";
 import { DEFAULT_WHISPER_INITIAL_PROMPT } from "../stt/corrections.ts";
+import { resolveRuntimeLayout } from "../runtime/paths.ts";
 import { resolveVoiceAdapters, type VoiceAdapterBundle } from "./platform.ts";
 
 function exeSync(path: string): boolean {
@@ -60,6 +61,8 @@ function resolveTmpDir(options?: { config?: VoiceConfig; tmpDir?: string }): str
 	if (options?.tmpDir) return options.tmpDir;
 	if (options?.config?.paths.tmp) return options.config.paths.tmp;
 	if (process.env.GENTLE_VOICE_TMP) return process.env.GENTLE_VOICE_TMP;
+	const layout = resolveRuntimeLayout();
+	if (existsSync(layout.tmpDir)) return layout.tmpDir;
 	const wd = "/home/erickfm/WD-Black/gentle-voice/tmp";
 	if (labPathsAllowed() && existsSync(wd)) return wd;
 	return join(tmpdir(), "gentle-voice");
@@ -80,6 +83,19 @@ function resolvePiperFromEnvOrLab(): {
 				|| `${envVoice}.json`,
 		};
 	}
+	const layout = resolveRuntimeLayout();
+	const runtimePiper = process.platform === "win32"
+		? join(layout.dataDir, "bin", "piper.exe")
+		: join(layout.dataDir, "bin", "piper");
+	const runtimeVoice = join(layout.dataDir, "models", "piper", "es_AR-daniela-high.onnx");
+	const runtimeVoiceCfg = `${runtimeVoice}.json`;
+	if (exeSync(runtimePiper) && readableSync(runtimeVoice)) {
+		return {
+			piperPath: runtimePiper,
+			voiceModelPath: runtimeVoice,
+			voiceConfigPath: readableSync(runtimeVoiceCfg) ? runtimeVoiceCfg : `${runtimeVoice}.json`,
+		};
+	}
 	if (!labPathsAllowed()) return undefined;
 	if (
 		exeSync(LAB_PIPER_DEFAULTS.piperPath)
@@ -87,6 +103,28 @@ function resolvePiperFromEnvOrLab(): {
 	) {
 		return { ...LAB_PIPER_DEFAULTS };
 	}
+	return undefined;
+}
+
+function resolveWhisperFromRuntimeOrLab(config?: VoiceConfig): {
+	cli: string;
+	model: string;
+} | undefined {
+	const layout = resolveRuntimeLayout();
+	const runtimeCli = process.platform === "win32"
+		? join(layout.dataDir, "bin", "whisper-cli.exe")
+		: join(layout.dataDir, "bin", "whisper-cli");
+	const runtimeModel = join(layout.dataDir, "models", "whisper", "ggml-base-q5_1.bin");
+	const envCli = process.env.GENTLE_VOICE_WHISPER_CLI?.trim();
+	const envModel = process.env.GENTLE_VOICE_WHISPER_MODEL?.trim()
+		|| config?.engines.sttModel?.trim();
+	const cli = (envCli && exeSync(envCli) ? envCli : undefined)
+		|| (exeSync(runtimeCli) ? runtimeCli : undefined)
+		|| (labPathsAllowed() && exeSync(LAB_WHISPER_CLI_CANDIDATE) ? LAB_WHISPER_CLI_CANDIDATE : undefined);
+	const model = (envModel && readableSync(envModel) ? envModel : undefined)
+		|| (readableSync(runtimeModel) ? runtimeModel : undefined)
+		|| (labPathsAllowed() && readableSync(LAB_VOXTYPE_GGML_SMALL) ? LAB_VOXTYPE_GGML_SMALL : undefined);
+	if (cli && model) return { cli, model };
 	return undefined;
 }
 
@@ -130,42 +168,40 @@ export function resolveLabVoiceAdapters(options?: {
 	let kokoroAdapter: TtsAdapter | undefined;
 	let kokoroReady = false;
 
-	if (!options?.forceStub && platform === "linux") {
-		if (exeSync("/usr/bin/pw-record")) {
-			const behavior = options?.config?.behavior;
-			capture = createPipewireCaptureAdapter({
-				pwRecordPath: "/usr/bin/pw-record",
-				vad: {
-					silenceHangMs: behavior?.silenceMs ?? 1_200,
-					maxListenMs: behavior?.maxListenMs ?? 60_000,
-					speechThreshold: behavior?.vadSpeechThreshold ?? 0.012,
-					maxIntraPauseMs: behavior?.vadMaxIntraPauseMs ?? 450,
-					postRollMs: 220,
-				},
-				// Default arm delay; session overrides per start() with echoSettleMs.
-				vadArmDelayMs: behavior?.echoSettleMs ?? 250,
-				...(options?.onVadEnd ? { onVadEnd: options.onVadEnd } : {}),
-			});
-			captureKind = "pipewire";
+	if (!options?.forceStub) {
+		if (platform === "linux") {
+			if (exeSync("/usr/bin/pw-record")) {
+				const behavior = options?.config?.behavior;
+				capture = createPipewireCaptureAdapter({
+					pwRecordPath: "/usr/bin/pw-record",
+					vad: {
+						silenceHangMs: behavior?.silenceMs ?? 1_200,
+						maxListenMs: behavior?.maxListenMs ?? 60_000,
+						speechThreshold: behavior?.vadSpeechThreshold ?? 0.012,
+						maxIntraPauseMs: behavior?.vadMaxIntraPauseMs ?? 450,
+						postRollMs: 220,
+					},
+					vadArmDelayMs: behavior?.echoSettleMs ?? 250,
+					...(options?.onVadEnd ? { onVadEnd: options.onVadEnd } : {}),
+				});
+				captureKind = "pipewire";
+			}
+
+			if (exeSync("/usr/bin/pw-play") || exeSync("/usr/bin/pw-cat")) {
+				playback = createPipewirePlaybackAdapter({
+					pwPlayPath: "/usr/bin/pw-play",
+					tmpDir,
+					keepTemp: false,
+				});
+				playbackKind = "pipewire";
+			}
 		}
 
-		if (exeSync("/usr/bin/pw-play") || exeSync("/usr/bin/pw-cat")) {
-			playback = createPipewirePlaybackAdapter({
-				pwPlayPath: "/usr/bin/pw-play",
-				tmpDir,
-				keepTemp: false,
-			});
-			playbackKind = "pipewire";
-		}
-
-		const cli = process.env.GENTLE_VOICE_WHISPER_CLI?.trim() || LAB_WHISPER_CLI_CANDIDATE;
-		const model = options?.config?.engines.sttModel?.trim()
-			|| process.env.GENTLE_VOICE_WHISPER_MODEL?.trim()
-			|| (labPathsAllowed() ? LAB_VOXTYPE_GGML_SMALL : "");
-		if (cli && model && exeSync(cli) && readableSync(model)) {
+		const whisper = resolveWhisperFromRuntimeOrLab(options?.config);
+		if (whisper) {
 			stt = createWhisperSttAdapter({
-				whisperCliPath: cli,
-				modelPath: model,
+				whisperCliPath: whisper.cli,
+				modelPath: whisper.model,
 				dryRun: false,
 				language: options?.config?.engines.language === "auto"
 					? "es"
@@ -176,8 +212,8 @@ export function resolveLabVoiceAdapters(options?: {
 					|| DEFAULT_WHISPER_INITIAL_PROMPT,
 			});
 			sttKind = "whisper";
-			whisperCli = cli;
-			modelPath = model;
+			whisperCli = whisper.cli;
+			modelPath = whisper.model;
 		}
 
 		const piper = resolvePiperFromEnvOrLab();
@@ -194,7 +230,6 @@ export function resolveLabVoiceAdapters(options?: {
 			piperVoice = piper.voiceModelPath;
 		}
 
-		// Kokoro available for A/B selection — default remains Piper unless env forces Kokoro.
 		if (labKokoroPresent()) {
 			kokoroAdapter = createKokoroTtsAdapter({ tmpDir, keepTemp: false, dryRun: false });
 			kokoroReady = true;

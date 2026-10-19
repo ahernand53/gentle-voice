@@ -425,9 +425,10 @@ export class VoiceSession {
 		this.#config = config;
 		this.#meter.setEnabled(config.behavior.visualWaves);
 		this.dispatch({ type: "SET_MODE", mode: config.behavior.mode });
-		if (config.behavior.muted || config.behavior.mode === "silent") {
+		const silent = (config.behavior.mode as string) === "silent";
+		if (config.behavior.muted || silent) {
 			this.dispatch({ type: "MUTE" });
-		} else if (!config.behavior.muted && this.#state.muted && config.behavior.mode !== "silent") {
+		} else if (!config.behavior.muted && this.#state.muted && !silent) {
 			this.dispatch({ type: "UNMUTE" });
 		}
 		if (config.enabled && !this.#state.enabled) this.dispatch({ type: "ENABLE" });

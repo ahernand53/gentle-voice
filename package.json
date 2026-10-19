@@ -1,17 +1,29 @@
 {
 	"name": "gentle-voice",
-	"version": "0.0.0",
-	"description": "Local voice conversation extension for Pi Coding Agent (STT/TTS, portable, no Gentle Shell hard dependency).",
+	"version": "0.1.0-beta.1",
+	"description": "Local voice conversation extension for Pi Coding Agent and Gentle Shell (STT/TTS).",
 	"license": "MIT",
 	"type": "module",
+	"author": "efolchmontiel",
+	"homepage": "https://github.com/efolchmontiel/gentle-voice#readme",
+	"bugs": {
+		"url": "https://github.com/efolchmontiel/gentle-voice/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/efolchmontiel/gentle-voice.git"
+	},
 	"keywords": [
 		"pi-package",
 		"pi",
 		"pi-coding-agent",
+		"gentle-shell",
 		"gentle-voice",
 		"speech",
 		"stt",
-		"tts"
+		"tts",
+		"whisper",
+		"piper"
 	],
 	"files": [
 		"assets/",
@@ -23,19 +35,29 @@
 	],
 	"scripts": {
 		"test": "node --experimental-strip-types --test tests/*.test.ts",
-		"typecheck": "tsc --noEmit -p tsconfig.json"
+		"typecheck": "tsc --noEmit -p tsconfig.lib.json",
+		"pack:check": "npm pack --dry-run"
 	},
 	"pi": {
+		"image": "./assets/gentle-logo-only.png",
 		"extensions": [
 			"./extensions"
 		]
 	},
 	"peerDependencies": {
-		"@earendil-works/pi-coding-agent": ">=1.2.0",
+		"@earendil-works/pi-ai": "*",
+		"@earendil-works/pi-agent-core": "*",
+		"@earendil-works/pi-coding-agent": "*",
 		"@earendil-works/pi-tui": "*",
 		"typebox": "*"
 	},
 	"peerDependenciesMeta": {
+		"@earendil-works/pi-ai": {
+			"optional": true
+		},
+		"@earendil-works/pi-agent-core": {
+			"optional": true
+		},
 		"@earendil-works/pi-coding-agent": {
 			"optional": true
 		},

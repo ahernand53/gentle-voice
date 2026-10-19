@@ -6,6 +6,7 @@
 
 import { join } from "node:path";
 import type { VoiceMode, VoicePlatform } from "./contracts.ts";
+import { resolveRuntimeLayout } from "./runtime/paths.ts";
 
 export const VOICE_CONFIG_SCHEMA = "gentle-voice.config/v1" as const;
 
@@ -296,32 +297,27 @@ export interface ResolvedVoicePaths {
 }
 
 /**
- * Resolve path overrides from env, then config.paths.
- * Missing paths stay undefined — callers must degrade, not invent ~/… defaults for publishable code.
+ * Resolve path overrides from env, then config.paths, then portable runtime layout
+ * (XDG / LocalAppData / Application Support). Never uses developer lab absolute paths.
  */
 export function resolveVoicePaths(
 	config: VoiceConfig,
 	env: NodeJS.ProcessEnv = process.env,
 ): ResolvedVoicePaths {
-	const pick = (envKey: string, fromConfig?: string): string | undefined => {
+	const layout = resolveRuntimeLayout(env, detectVoicePlatform());
+	const pick = (envKey: string, fromConfig: string | undefined, fallback: string): string => {
 		const fromEnv = env[envKey]?.trim();
 		if (fromEnv) return fromEnv;
 		const cfg = fromConfig?.trim();
-		return cfg || undefined;
+		if (cfg && !cfg.includes("${")) return cfg;
+		return fallback;
 	};
-	const home = pick(VOICE_ENV.home, config.paths.home);
-	const models = pick(VOICE_ENV.models, config.paths.models);
-	const cache = pick(VOICE_ENV.cache, config.paths.cache);
-	const tmp = pick(VOICE_ENV.tmp, config.paths.tmp);
-	const configFile = env[VOICE_ENV.config]?.trim()
-		|| (home ? join(home, "config.json") : undefined);
-	return {
-		...(home ? { home } : {}),
-		...(models ? { models } : {}),
-		...(cache ? { cache } : {}),
-		...(tmp ? { tmp } : {}),
-		...(configFile ? { configFile } : {}),
-	};
+	const home = pick(VOICE_ENV.home, config.paths.home, layout.home);
+	const models = pick(VOICE_ENV.models, config.paths.models, layout.modelsDir);
+	const cache = pick(VOICE_ENV.cache, config.paths.cache, layout.cacheDir);
+	const tmp = pick(VOICE_ENV.tmp, config.paths.tmp, layout.tmpDir);
+	const configFile = env[VOICE_ENV.config]?.trim() || layout.configFile;
+	return { home, models, cache, tmp, configFile };
 }
 
 export function detectVoicePlatform(platform: NodeJS.Platform = process.platform): VoicePlatform {

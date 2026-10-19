@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+    branches: [main, feat/**]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ["22"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install
+        run: npm install
+      - name: Unit tests
+        run: npm test
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Pack dry-run
+        run: npm pack --dry-run
+      - name: Isolated tarball smoke (posix)
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          TGZ=$(npm pack --silent)
+          SMOKE=$(mktemp -d)
+          mkdir -p "$SMOKE/home"
+          export HOME="$SMOKE/home"
+          export GENTLE_VOICE_HOME="$SMOKE/gv"
+          mkdir -p "$SMOKE/extract"
+          tar -xzf "$TGZ" -C "$SMOKE/extract"
+          test -f "$SMOKE/extract/package/extensions/voice.ts"
+          test -f "$SMOKE/extract/package/lib/voice-session.ts"
+          test ! -e "$SMOKE/extract/package/node_modules"
+          echo "pack-smoke-ok files=$(find "$SMOKE/extract/package" -type f | wc -l)"

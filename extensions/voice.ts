@@ -45,6 +45,8 @@ import {
 	VOICE_WIDGET_KEY,
 } from "../lib/widget-chrome.ts";
 import { voiceWidgetContent } from "../lib/visual/compact-widget.ts";
+import { runFirstRunPreparation } from "../lib/runtime/first-run.ts";
+import { formatCompatMarkdown } from "../lib/runtime/compat-matrix.ts";
 
 export { VOICE_STATUS_KEY, VOICE_WIDGET_KEY };
 
@@ -171,8 +173,9 @@ async function runVoiceEdit(
 	const existing = (ctx.ui.getEditorText?.() ?? "").trim();
 	if (existing && existing !== prep.text.trim()) {
 		let overwrite = true;
-		if (typeof (ctx.ui as { confirm?: (t: string, m: string) => Promise<boolean> }).confirm === "function") {
-			overwrite = await (ctx.ui as { confirm: (t: string, m: string) => Promise<boolean> }).confirm(
+		const editConfirm = (ctx.ui as unknown as { confirm?: (t: string, m: string) => Promise<boolean> }).confirm;
+		if (typeof editConfirm === "function") {
+			overwrite = await editConfirm(
 				"Gentle Voice Edit",
 				"El editor ya tiene texto. ¿Reemplazarlo por la transcripción de voz?",
 			);
@@ -791,15 +794,50 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 						`shortcut=${session.config.behavior.shortcut ?? "(none — preferred Ctrl+Alt+Space only if verified)"}`,
 						`engines.stt=${session.config.engines.stt || "(auto)"}`,
 						`engines.tts=${session.config.engines.tts || "(auto)"}`,
-						`paths.home=${paths.home ?? "(unset — set GENTLE_VOICE_HOME)"}`,
-						`paths.models=${paths.models ?? "(unset — set GENTLE_VOICE_MODELS)"}`,
-						`paths.cache=${paths.cache ?? "(unset — set GENTLE_VOICE_CACHE)"}`,
+						`paths.home=${paths.home}`,
+						`paths.models=${paths.models}`,
+						`paths.cache=${paths.cache}`,
+						`paths.tmp=${paths.tmp}`,
+						`paths.configFile=${paths.configFile}`,
 						`validation=${validation.ok ? "ok" : validation.errors.join("; ")}`,
 						"",
 						`behavior.autoSubmitTranscript=${session.config.behavior.autoSubmitTranscript}`,
 						`pendingDraft=${session.pendingReviewText ? "yes" : "no"}`,
-						"Phase 2C: review → /gentle:voice send → spoken final reply (no 2nd LLM).",
+						"Overrides: GENTLE_VOICE_HOME|MODELS|CACHE|TMP|CONFIG",
 					].join("\n"), "info");
+					break;
+				}
+				case "setup": {
+					const uiConfirm = (ctx.ui as unknown as { confirm?: (t: string, m: string) => Promise<boolean> }).confirm;
+					const snap = await runFirstRunPreparation({
+						notify: (message, level) => {
+							try {
+								ctx.ui.notify(message, level ?? "info");
+							} catch {
+								/* ignore */
+							}
+						},
+						...(typeof uiConfirm === "function"
+							? {
+								confirm: (title: string, message: string) => uiConfirm(title, message),
+							}
+							: {}),
+					});
+					ctx.ui.notify(
+						[
+							`setup.status=${snap.status}`,
+							`setup.platform=${snap.platform}/${snap.arch}`,
+							`setup.home=${snap.layoutHome}`,
+							`setup.present=${snap.present.join(",") || "(none)"}`,
+							`setup.missing=${snap.missing.join(",") || "(none)"}`,
+							`setup.estBytes=${snap.estimatedDownloadBytes}`,
+							snap.message,
+							"",
+							"Compat (honest):",
+							formatCompatMarkdown(),
+						].join("\n"),
+						"info",
+					);
 					break;
 				}
 				default:

@@ -17,6 +17,7 @@ export const VOICE_SUBCOMMANDS: readonly VoiceCommandName[] = [
 	"mute",
 	"status",
 	"config",
+	"setup",
 	"send",
 	"draft",
 	"edit",
@@ -55,7 +56,7 @@ export function parseVoiceArgs(raw: string): ParsedVoiceArgs {
 			return {
 				command: "",
 				rest: trimmed,
-				error: `Unknown subcommand "${head}". Try: on|off|listen|stop|mute|status|config|send|draft|edit`,
+				error: `Unknown subcommand "${head}". Try: on|off|listen|stop|mute|status|config|setup|send|draft|edit`,
 			};
 		}
 		return {
@@ -70,7 +71,7 @@ export function parseVoiceArgs(raw: string): ParsedVoiceArgs {
 		return {
 			command: "",
 			rest: trimmed,
-			error: `Unknown subcommand "${head}". Try: on|off|listen|stop|mute|status|config|send|draft|edit`,
+			error: `Unknown subcommand "${head}". Try: on|off|listen|stop|mute|status|config|setup|send|draft|edit`,
 		};
 	}
 	return { command, rest: tail.join(" ") };
@@ -98,6 +99,7 @@ export function voiceHelpText(options?: { includeLab?: boolean }): string {
 		"  /gentle:voice edit         Load last voice submit into Pi editor (Ctrl+Alt+E)",
 		"  /gentle:voice status       Show mode, mute, phase, adapter probes",
 		"  /gentle:voice config       Show effective config / path resolution hints",
+		"  /gentle:voice setup        First-run readiness (portable data dir; consent for downloads)",
 	];
 	if (options?.includeLab || isGentleVoiceLabMode()) {
 		lines.push(
