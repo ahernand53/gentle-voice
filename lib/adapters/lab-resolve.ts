@@ -194,6 +194,20 @@ export function resolveLabVoiceAdapters(options?: {
 						? { sileroModelPath: behavior.sileroModelPath }
 						: {}),
 					vadArmDelayMs: behavior?.echoSettleMs ?? 250,
+					onVadResolved: (info) => {
+						const line = `${JSON.stringify({ at: new Date().toISOString(), ...info })}\n`;
+						const logPath = process.env.GENTLE_VOICE_VAD_LOG?.trim();
+						if (logPath) {
+							void import("node:fs/promises").then(({ appendFile, mkdir }) =>
+								mkdir(logPath.replace(/[/\\][^/\\]+$/, ""), { recursive: true })
+									.then(() => appendFile(logPath, line, "utf8"))
+									.catch(() => {}),
+							);
+						}
+						if (process.env.GENTLE_VOICE_LAB_DIAG === "1") {
+							console.error(`[gentle-voice] vad backend=${info.backend}${info.fallbackReason ? ` fallback=${info.fallbackReason}` : ""}`);
+						}
+					},
 					...(options?.onVadEnd ? { onVadEnd: options.onVadEnd } : {}),
 				});
 				captureKind = "pipewire";

@@ -12,6 +12,9 @@ import type { VadEngine, VadEngineState, VadPhase, VadTimingOptions } from "./ty
 
 /** 16 kHz Silero window (official). */
 export const SILERO_WINDOW_SAMPLES = 512;
+/** Rolling context prepended to each window (snakers4 utils_vad OnnxWrapper). */
+export const SILERO_CONTEXT_SAMPLES = 64;
+export const SILERO_INPUT_SAMPLES = SILERO_CONTEXT_SAMPLES + SILERO_WINDOW_SAMPLES; // 576
 export const SILERO_STATE_SIZE = 2 * 1 * 128;
 
 export interface SileroVadOptions extends VadTimingOptions {
@@ -226,12 +229,21 @@ export async function tryCreateSileroVad(options: SileroVadOptions): Promise<Sil
 
 	try {
 		const modelBytes = await readFile(modelPath);
+		// Use default providers from the installed onnxruntime-node build
+		// (lab GPU build may not expose CPUExecutionProvider by name).
 		const session = await ort.InferenceSession.create(modelBytes);
 		let stateData = new Float32Array(SILERO_STATE_SIZE);
 		const sr = BigInt64Array.from([BigInt(16_000)]);
 
+		let context = new Float32Array(SILERO_CONTEXT_SAMPLES);
 		const runFrame = async (frame: Float32Array): Promise<number> => {
-			const input = new ort.Tensor("float32", frame, [1, SILERO_WINDOW_SAMPLES]);
+			if (frame.length !== SILERO_WINDOW_SAMPLES) {
+				throw new Error(`silero frame must be ${SILERO_WINDOW_SAMPLES} samples`);
+			}
+			const inputData = new Float32Array(SILERO_INPUT_SAMPLES);
+			inputData.set(context);
+			inputData.set(frame, SILERO_CONTEXT_SAMPLES);
+			const input = new ort.Tensor("float32", inputData, [1, SILERO_INPUT_SAMPLES]);
 			const state = new ort.Tensor("float32", stateData, [2, 1, 128]);
 			const srT = new ort.Tensor("int64", sr, []);
 			const out = await session.run({
@@ -247,11 +259,18 @@ export async function tryCreateSileroVad(options: SileroVadOptions): Promise<Sil
 			if (nextState && nextState.length === stateData.length) {
 				stateData = Float32Array.from(nextState);
 			}
+			context = inputData.slice(inputData.length - SILERO_CONTEXT_SAMPLES);
 			const p = probData?.[0];
 			return typeof p === "number" && Number.isFinite(p) ? p : 0;
 		};
 
 		const engine = createSileroVadFromRunner({ ...options, runFrame });
+		const baseReset = engine.reset.bind(engine);
+		engine.reset = () => {
+			context = new Float32Array(SILERO_CONTEXT_SAMPLES);
+			stateData = new Float32Array(SILERO_STATE_SIZE);
+			baseReset();
+		};
 		engine.dispose = async () => {
 			await session.release?.();
 		};
