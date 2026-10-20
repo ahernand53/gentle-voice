@@ -14,7 +14,7 @@ import type {
 import type { VoiceConfig } from "./config.ts";
 import { DEFAULT_VOICE_CONFIG } from "./config.ts";
 import { buildFinalUtterance } from "./final-utterance.ts";
-import { AbortError, CancellationBag } from "./process-cancel.ts";
+import { AbortError, CancellationBag, isAbortError } from "./process-cancel.ts";
 import {
 	applySttCorrections,
 	DEFAULT_WHISPER_INITIAL_PROMPT,
@@ -348,7 +348,18 @@ export class VoiceSession {
 		this.cancelScheduledListen();
 		this.#speakEpoch += 1;
 		this.#streamTurnId += 1;
+		// Drain active capture before/with abort so AbortError is handled and
+		// a later Ctrl+Alt+Space cannot trip an orphaned rejection.
+		const stopCapture = this.#captureStop;
+		this.#captureStop = undefined;
 		this.#bag.abortAll();
+		if (stopCapture) {
+			void Promise.resolve(stopCapture()).catch((error) => {
+				if (isAbortError(error)) return;
+				const message = error instanceof Error ? error.message : String(error);
+				this.dispatch({ type: "FAIL", error: message });
+			});
+		}
 		this.#streamQueue.cancel();
 		this.#streamActive = false;
 		this.#streamHadAudio = false;
@@ -771,7 +782,7 @@ export class VoiceSession {
 			try {
 				await this.#runEffect(effect);
 			} catch (error) {
-				if (error instanceof AbortError) continue;
+				if (isAbortError(error)) continue;
 				const message = error instanceof Error ? error.message : String(error);
 				this.dispatch({ type: "FAIL", error: message });
 			}

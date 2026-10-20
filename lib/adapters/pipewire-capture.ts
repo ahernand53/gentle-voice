@@ -13,7 +13,7 @@ import type {
 	CaptureSegmentMeta,
 	CaptureSession,
 } from "../contracts.ts";
-import { AbortError, onAbort, throwIfAborted } from "../process-cancel.ts";
+import { AbortError, ignoreUnhandledAbort, onAbort, throwIfAborted } from "../process-cancel.ts";
 import { createEnergyVad, type EnergyVadOptions } from "../vad/energy-vad.ts";
 import { pcmS16leToWav } from "./wav.ts";
 
@@ -132,6 +132,9 @@ export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {
 					reject(err);
 				};
 			});
+			// Esc / cancelVoiceAudio aborts the signal before stop() is awaited.
+			// Without this, AbortError becomes an uncaughtException and kills Pi.
+			ignoreUnhandledAbort(done);
 
 			const buildChunk = (): AudioChunk => {
 				const pcm = Buffer.concat(pcmChunks);
@@ -228,8 +231,9 @@ export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {
 
 			return {
 				id,
-				async stop(stopSignal) {
-					throwIfAborted(stopSignal ?? signal);
+				async stop(_stopSignal) {
+					// Do not throwIfAborted here: abort already rejects `done`.
+					// Throwing first would orphan that rejection and crash the host.
 					detach();
 					if (!settled) endCapture("stop");
 					return done;

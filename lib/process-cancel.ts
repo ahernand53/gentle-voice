@@ -13,8 +13,28 @@ export class AbortError extends Error {
 	}
 }
 
+export function isAbortError(error: unknown): boolean {
+	if (error instanceof AbortError) return true;
+	if (!error || typeof error !== "object") return false;
+	return (error as { name?: string }).name === "AbortError";
+}
+
 export function throwIfAborted(signal?: AbortSignal): void {
 	if (signal?.aborted) throw new AbortError();
+}
+
+/**
+ * Swallow AbortError rejections so aborting a capture/play promise before any
+ * awaiter cannot crash the host (uncaughtException / unhandledRejection).
+ * Non-abort errors are re-queued so they still surface if nothing awaits.
+ */
+export function ignoreUnhandledAbort(promise: Promise<unknown>): void {
+	void promise.catch((error) => {
+		if (isAbortError(error)) return;
+		queueMicrotask(() => {
+			Promise.reject(error);
+		});
+	});
 }
 
 export function onAbort(signal: AbortSignal | undefined, fn: () => void): () => void {
