@@ -1,7 +1,7 @@
 /**
  * Pi extension entry — Gentle Voice.
- * Phase 2C.1: recover final reply from turn_end/agent_end (agent_settled has no message).
- * Lab-only: test-speak / converse (GENTLE_VOICE_LAB=1).
+ * Conversation + shortcuts are product features (no LAB required).
+ * Lab-only: test-speak / ab-compare / tts switch (GENTLE_VOICE_LAB=1).
  */
 
 import { randomUUID } from "node:crypto";
@@ -22,7 +22,7 @@ import {
 	maybeRegisterVoiceShortcut,
 	maybeRegisterExtraShortcut,
 	type ShortcutProbe,
-	labShortcutProbeFromEnv,
+	defaultVoiceShortcutProbe,
 } from "../lib/shortcut.ts";
 import { beginSetup } from "../lib/engines/setup.ts";
 import type { EngineProbe } from "../lib/engines/detect.ts";
@@ -52,10 +52,27 @@ import {
 	planGentleVoiceDataCleanup,
 	resolveGentleVoiceStorage,
 } from "../lib/runtime/storage.ts";
+import {
+	CLEANUP_CONFIRM_TOKEN,
+	executeGentleVoiceDataCleanup,
+	formatCleanupPlan,
+} from "../lib/runtime/cleanup.ts";
 
 export { VOICE_STATUS_KEY, VOICE_WIDGET_KEY };
 
-/** Lab opt-in for hands-free auto-submit (never outside GENTLE_VOICE_LAB). */
+/**
+ * Auto-submit while a conversation session is active.
+ * Product default: ON for conversation sessions.
+ * Opt-out: GENTLE_VOICE_DISABLE_AUTO_SUBMIT=1.
+ * Legacy LAB_AUTO_SUBMIT still forces ON when LAB=1 (compat with older lab docs).
+ */
+export function conversationAutoSubmitEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+	if (env.GENTLE_VOICE_DISABLE_AUTO_SUBMIT === "1") return false;
+	if (env.GENTLE_VOICE_LAB === "1" && env.GENTLE_VOICE_LAB_AUTO_SUBMIT === "1") return true;
+	return true;
+}
+
+/** @deprecated Use conversationAutoSubmitEnabled — kept for older tests. */
 export function labAutoSubmitOptIn(env: NodeJS.ProcessEnv = process.env): boolean {
 	return env.GENTLE_VOICE_LAB === "1" && env.GENTLE_VOICE_LAB_AUTO_SUBMIT === "1";
 }
@@ -100,8 +117,9 @@ export function updateChrome(ctx: VoiceHostCommandContext, session: VoiceSession
 	}
 }
 
-function enableLabConverse(session: VoiceSession): void {
-	const auto = labAutoSubmitOptIn();
+/** Start hands-free conversation (product — no LAB required). Mic stays off until LISTEN. */
+function enableConversationSession(session: VoiceSession): void {
+	const auto = conversationAutoSubmitEnabled();
 	session.replaceConfig({
 		...session.config,
 		enabled: true,
@@ -110,7 +128,6 @@ function enableLabConverse(session: VoiceSession): void {
 			mode: "conversation",
 			fluentConversation: true,
 			autoSubmitTranscript: auto,
-			// 2D.5: slightly tighter end-of-utterance hang (keep anti-ghost gates).
 			silenceMs: Math.min(session.config.behavior.silenceMs, 900),
 			vadMaxIntraPauseMs: Math.max(session.config.behavior.vadMaxIntraPauseMs, 500),
 		},
@@ -119,7 +136,7 @@ function enableLabConverse(session: VoiceSession): void {
 	session.dispatch({ type: "SET_MODE", mode: "conversation" });
 }
 
-function endLabConverse(session: VoiceSession): void {
+function endConversationSession(session: VoiceSession): void {
 	session.endEditHold();
 	session.cancelVoiceAudio("converse_off");
 	session.replaceConfig({
@@ -130,7 +147,6 @@ function endLabConverse(session: VoiceSession): void {
 			autoSubmitTranscript: false,
 		},
 	});
-	// Stop capture/playback; do not DISABLE if we only end converse — keep widget until off.
 	if (session.state.phase === "listening" || session.state.phase === "speaking" || session.state.phase === "transcribing") {
 		session.dispatch({ type: "STOP" });
 	}
@@ -398,10 +414,11 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 		}
 	};
 
-	const shortcutProbe = options.shortcutProbe
-		?? (process.env.GENTLE_VOICE_SHORTCUT_VERIFIED === "1"
-			? labShortcutProbeFromEnv()
-			: undefined);
+	const shortcutProbe = options.shortcutProbe ?? defaultVoiceShortcutProbe();
+	let spaceShortcutRegistered = false;
+	let editShortcutRegistered = false;
+	let spaceShortcutReason = "pending";
+	let editShortcutReason = "pending";
 
 	void maybeRegisterVoiceShortcut(pi, {
 		...(session.config.behavior.shortcut
@@ -412,32 +429,31 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 			lastCtx = ctx as VoiceHostCommandContext;
 			await ensureAutomaticFirstRun(lastCtx);
 			const fluent = session.config.behavior.fluentConversation;
-			const lab = isGentleVoiceLabMode();
 
-			// ——— Conversation session toggle (lab hands-free) ———
-			if (lab && (!session.state.enabled || !fluent)) {
-				enableLabConverse(session);
+			// ——— Conversation session toggle (product hands-free) ———
+			if (!session.state.enabled || !fluent) {
+				enableConversationSession(session);
 				session.dispatch({ type: "LISTEN" });
 				await session.flush();
 				lastCtx.ui.notify(
-					`Hands-free conversation ON (autoSubmit=${session.config.behavior.autoSubmitTranscript}). Speak freely; VAD ends turns. Press Ctrl+Alt+Space again to end.`,
+					`Conversation ON (autoSubmit=${session.config.behavior.autoSubmitTranscript}). Speak; VAD ends turns. Ctrl+Alt+Space ends.`,
 					"info",
 				);
 				updateChrome(lastCtx, session);
 				return;
 			}
 
-			if (lab && fluent) {
+			if (fluent) {
 				if (session.state.phase === "awaiting_agent") {
-					endLabConverse(session);
+					endConversationSession(session);
 					await session.flush();
 					lastCtx.ui.notify("Conversation ended — agent continues; mic/TTS stopped.", "info");
 					updateChrome(lastCtx, session);
 					return;
 				}
-				endLabConverse(session);
+				endConversationSession(session);
 				await session.flush();
-				lastCtx.ui.notify("Hands-free conversation OFF.", "info");
+				lastCtx.ui.notify("Conversation OFF.", "info");
 				updateChrome(lastCtx, session);
 				return;
 			}
@@ -467,17 +483,23 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 			await session.flush();
 			updateChrome(lastCtx, session);
 		},
+	}).then((availability) => {
+		spaceShortcutRegistered = availability.registered;
+		spaceShortcutReason = availability.reason;
 	});
 
-	// Ctrl+Alt+E — Gentle Voice Edit (same verification gate as Space).
+	// Ctrl+Alt+E — edit pending / last voice transcript (same product probe as Space).
 	void maybeRegisterExtraShortcut(pi, {
 		chord: "ctrl+alt+e",
-		description: "Gentle Voice Edit — last voice transcript in Pi editor",
+		description: "Gentle Voice Edit — pending / last voice transcript in Pi editor",
 		probe: shortcutProbe,
 		handler: async (ctx) => {
 			lastCtx = ctx as VoiceHostCommandContext;
 			await runVoiceEdit(lastCtx, session);
 		},
+	}).then((result) => {
+		editShortcutRegistered = result.registered;
+		editShortcutReason = result.reason;
 	});
 
 	// Esc coordination via raw terminal input — only when voice is busy.
@@ -510,35 +532,6 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 
 			if (parsed.command === "edit") {
 				await runVoiceEdit(ctx, session);
-				return;
-			}
-
-			if (parsed.labCommand === "converse") {
-				if (!isGentleVoiceLabMode()) {
-					ctx.ui.notify("Unknown subcommand \"converse\".", "warning");
-					return;
-				}
-				const arg = parsed.rest.trim().toLowerCase();
-				const on = arg === "on" || arg === "1" || arg === "true";
-				const off = arg === "off" || arg === "0" || arg === "false";
-				if (!on && !off) {
-					ctx.ui.notify("Usage: /gentle:voice converse on|off", "warning");
-					return;
-				}
-				if (on) {
-					enableLabConverse(session);
-					session.dispatch({ type: "LISTEN" });
-				} else {
-					endLabConverse(session);
-				}
-				ctx.ui.notify(
-					on
-						? `Fluent conversation ON (autoSubmit=${session.config.behavior.autoSubmitTranscript}). VAD ends utterances. Ctrl+Alt+Space ends session.`
-						: "Fluent conversation OFF — manual listen/stop/send.",
-					"info",
-				);
-				await session.flush();
-				updateChrome(ctx, session);
 				return;
 			}
 
@@ -817,42 +810,104 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 					}
 					break;
 				}
+				case "converse": {
+					const arg = parsed.rest.trim().toLowerCase();
+					const on = arg === "on" || arg === "1" || arg === "true";
+					const off = arg === "off" || arg === "0" || arg === "false";
+					if (!on && !off) {
+						ctx.ui.notify("Usage: /gentle:voice converse on|off", "warning");
+						break;
+					}
+					if (on) {
+						enableConversationSession(session);
+						session.dispatch({ type: "LISTEN" });
+					} else {
+						endConversationSession(session);
+					}
+					ctx.ui.notify(
+						on
+							? `Conversation ON (autoSubmit=${session.config.behavior.autoSubmitTranscript}). VAD ends utterances. Ctrl+Alt+Space ends session.`
+							: "Conversation OFF — dictation/manual listen/stop/send.",
+						"info",
+					);
+					break;
+				}
+				case "purge": {
+					const storage = resolveGentleVoiceStorage();
+					const plan = planGentleVoiceDataCleanup(storage);
+					const rest = parsed.rest.trim();
+					const confirmMatch = rest.match(/--confirm(?:=|\s+)(\S+)/);
+					const confirm = confirmMatch?.[1] ?? "";
+					if (!confirm) {
+						ctx.ui.notify(
+							[
+								formatCleanupPlan(plan),
+								"",
+								"This does NOT uninstall the npm package.",
+								"To delete private data after reviewing paths:",
+								`  /gentle:voice purge --confirm ${CLEANUP_CONFIRM_TOKEN}`,
+								"Or after package removal: `npx gentle-voice-cleanup --confirm …`",
+								"Never deletes Voxtype / WD-Black / other Pi packages / GS versions.",
+							].join("\n"),
+							"info",
+						);
+						break;
+					}
+					const result = await executeGentleVoiceDataCleanup({ confirm, resolution: storage });
+					ctx.ui.notify(
+						[
+							`purge.ok=${result.ok}`,
+							...result.deleted.map((d) => `deleted=${d}`),
+							...result.skipped.map((d) => `skipped=${d}`),
+							...result.errors.map((e) => `error=${e}`),
+						].join("\n"),
+						result.ok ? "info" : "warning",
+					);
+					break;
+				}
 				case "status": {
 					const probe = await probeAdapterBundle(adapters);
 					const setup = await beginSetup({
 						probe: options.engineProbe ?? createFilesystemEngineProbe(),
 					});
-					const whisperHint = resolved.sttKind === "whisper"
-						? `Whisper operational (lab:${resolved.whisperCli ?? "path"})`
-						: setup.report.message;
+					const storage = resolveGentleVoiceStorage();
 					const selected = session.config.engines.tts || "(auto)";
 					const activeId = session.deps.tts.id;
 					const lastSynth = session.lastTtsEngineId;
+					const conversationCapable =
+						probe.capture === "ready"
+						&& probe.stt === "ready"
+						&& probe.tts === "ready"
+						&& probe.playback === "ready";
 					const lines = [
 						session.statusLine(),
+						`hostKind=${storage.hostKind}`,
+						`storageRoot=${storage.storageRoot}`,
 						`platform=${probe.platform}`,
-						`capture=${probe.capture}`,
-						`stt=${probe.stt}`,
-						`tts=${probe.tts}`,
-						`playback=${probe.playback}`,
-						`lab.capture=${resolved.captureKind}`,
-						`lab.stt=${resolved.sttKind}`,
-						`lab.tts=${resolved.ttsKind}`,
-						`lab.playback=${resolved.playbackKind}`,
-						`kokoroReady=${resolved.kokoroReady}`,
+						`engines.capture=${probe.capture}`,
+						`engines.stt=${probe.stt}`,
+						`engines.tts=${probe.tts}`,
+						`engines.playback=${probe.playback}`,
+						`conversationCapable=${conversationCapable}`,
+						`conversationActive=${session.config.behavior.fluentConversation}`,
+						`mode=${session.config.behavior.mode}`,
+						`autoSubmitEffective=${session.config.behavior.autoSubmitTranscript}`,
+						`autoSubmitDisabledEnv=${process.env.GENTLE_VOICE_DISABLE_AUTO_SUBMIT === "1"}`,
 						`tts.selected=${selected}`,
 						`tts.activeAdapter=${activeId}`,
 						`tts.lastSynthesize=${lastSynth}`,
 						`tts.fallbackReason=${session.lastTtsFallbackReason || "(none)"}`,
 						`tts.voiceHint=${activeId.includes("kokoro") ? "kokoro/ef_dora" : activeId.includes("piper") ? "piper/daniela-high" : activeId}`,
+						`kokoroLabReady=${resolved.kokoroReady}`,
 						`engines.scenario=${setup.report.scenario}`,
-						`engines.hint=${whisperHint}`,
-						`fluent=${session.config.behavior.fluentConversation}`,
-						`autoSubmit=${session.config.behavior.autoSubmitTranscript}`,
+						`shortcut.space.registered=${spaceShortcutRegistered}`,
+						`shortcut.space.reason=${spaceShortcutReason}`,
+						`shortcut.edit.registered=${editShortcutRegistered}`,
+						`shortcut.edit.reason=${editShortcutReason}`,
+						`shortcut.disabledEnv=${process.env.GENTLE_VOICE_DISABLE_SHORTCUTS === "1"}`,
+						`shortcut.osDelivery=unknown (registration ≠ physical key reception)`,
 						`lastSubmitTurn=${session.lastSubmitTurnId || "(none)"}`,
-						`lastUtteranceGate=${session.lastLabDiag || "(none)"}`,
-						`shortcutVerified=${process.env.GENTLE_VOICE_SHORTCUT_VERIFIED === "1"}`,
-						`shortcutLab=${process.env.GENTLE_VOICE_LAB_SHORTCUT === "1"}`,
+						`pendingDraft=${session.pendingReviewText ? "yes" : "no"}`,
 						"",
 						voiceHelpText({ includeLab: isGentleVoiceLabMode() }),
 					];

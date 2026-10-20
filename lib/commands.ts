@@ -22,12 +22,13 @@ export const VOICE_SUBCOMMANDS: readonly VoiceCommandName[] = [
 	"send",
 	"draft",
 	"edit",
+	"converse",
+	"purge",
 ] as const;
 
 /** Lab-only — not in VoiceCommandName; gated by isGentleVoiceLabMode(). */
 export const LAB_VOICE_SUBCOMMANDS = [
 	"test-speak",
-	"converse",
 	"ab-compare",
 	"ab-score",
 	"tts",
@@ -57,7 +58,7 @@ export function parseVoiceArgs(raw: string): ParsedVoiceArgs {
 			return {
 				command: "",
 				rest: trimmed,
-				error: `Unknown subcommand "${head}". Try: on|off|listen|stop|mute|status|config|setup|storage|send|draft|edit`,
+				error: `Unknown subcommand "${head}". Try: on|off|listen|stop|mute|status|config|setup|storage|send|draft|edit|converse|purge`,
 			};
 		}
 		return {
@@ -72,7 +73,7 @@ export function parseVoiceArgs(raw: string): ParsedVoiceArgs {
 		return {
 			command: "",
 			rest: trimmed,
-			error: `Unknown subcommand "${head}". Try: on|off|listen|stop|mute|status|config|setup|storage|send|draft|edit`,
+			error: `Unknown subcommand "${head}". Try: on|off|listen|stop|mute|status|config|setup|storage|send|draft|edit|converse|purge`,
 		};
 	}
 	return { command, rest: tail.join(" ") };
@@ -86,27 +87,29 @@ export function parseModeFlag(rest: string): VoiceMode | undefined {
 
 export function voiceHelpText(options?: { includeLab?: boolean }): string {
 	const lines = [
-		"Gentle Voice — local STT/TTS for Pi (phase 2C — review → explicit send → spoken reply).",
+		"Gentle Voice — local STT/TTS conversation for Pi and Gentle Shell.",
 		"",
 		"Usage:",
 		"  /gentle:voice              Toggle enabled, or show status when already on",
 		"  /gentle:voice on           Enable voice session",
 		"  /gentle:voice off          Disable and cancel in-flight audio work",
-		"  /gentle:voice listen       Start a listen window",
+		"  /gentle:voice converse on  Start hands-free conversation (VAD → auto-submit → TTS → listen)",
+		"  /gentle:voice converse off End conversation session (keeps engines installed)",
+		"  /gentle:voice listen       Start a single listen window",
 		"  /gentle:voice stop         Stop listen/speak and return to idle",
 		"  /gentle:voice mute         Mute TTS (STT may continue)",
 		"  /gentle:voice draft <text> Replace pending transcript before send",
-		"  /gentle:voice send         Send pending transcript to the agent (explicit)",
-		"  /gentle:voice edit         Load last voice submit into Pi editor (Ctrl+Alt+E)",
-		"  /gentle:voice status       Show mode, mute, phase, adapter probes",
-		"  /gentle:voice config       Show effective config / path resolution hints",
-		"  /gentle:voice setup        First-run readiness (portable data dir; consent for downloads)",
-		"  /gentle:voice storage      Show host isolation + private data dirs (cleanup dry-run)",
+		"  /gentle:voice send         Send pending transcript (dictation / manual review)",
+		"  /gentle:voice edit         Load pending/last voice text into Pi editor (Ctrl+Alt+E)",
+		"  /gentle:voice status       Engines, conversation, shortcuts, storage (honest fields)",
+		"  /gentle:voice config       Effective config / path resolution hints",
+		"  /gentle:voice setup        First-run readiness (consent-gated downloads)",
+		"  /gentle:voice storage      Host isolation + private data dirs (cleanup dry-run)",
+		"  /gentle:voice purge        Show data-cleanup plan (requires confirm token to delete)",
 	];
 	if (options?.includeLab || isGentleVoiceLabMode()) {
 		lines.push(
 			"  /gentle:voice test-speak     [lab] Fixed phrase TTS+playback (no LLM)",
-			"  /gentle:voice converse on|off [lab] Fluent VAD loop (opt-in; auto-send only if configured)",
 			"  /gentle:voice ab-compare [n] [engine] [lab] Play fixed phrase n (piper|kokoro)",
 			"  /gentle:voice ab-score <1-5>  [lab] Rate last A/B trial naturalness",
 			"  /gentle:voice tts piper|kokoro [lab] Select installed TTS (does not change default permanently)",
@@ -114,10 +117,17 @@ export function voiceHelpText(options?: { includeLab?: boolean }): string {
 	}
 	lines.push(
 		"",
-		"Modes (via config): dictation | conversation | silent",
-		"autoSubmitTranscript defaults to false — review then /gentle:voice send.",
-		"No default keyboard shortcut; Ctrl+Alt+Space stays fail-closed until verified.",
-		"Does not narrate tools, subagents, thinking, or invent spoken summaries.",
+		"Shortcuts (when the host accepts them):",
+		"  Ctrl+Alt+Space  Start/stop hands-free conversation",
+		"  Ctrl+Alt+E      Edit pending / last voice transcript in the Pi editor",
+		"  Esc             Cancel playback/generation only while voice is busy",
+		"  Disable chords: GENTLE_VOICE_DISABLE_SHORTCUTS=1",
+		"",
+		"Modes: conversation (auto-submit while session is on) | dictation (manual send) | silent",
+		"Mic stays off until you start a session (shortcut or converse on / listen).",
+		"Package remove: `pi remove npm:gentle-voice` (keeps private data).",
+		"Data remove: `/gentle:voice purge` then confirm, or `gentle-voice-cleanup` CLI.",
+		"Does not narrate tools, subagents, or thinking.",
 	);
 	return lines.join("\n");
 }
