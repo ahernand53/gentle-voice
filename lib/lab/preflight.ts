@@ -4,6 +4,7 @@
  * ensureEngramCompanion (policy pin install on every bundled launch).
  */
 
+import { existsSync } from "node:fs";
 import { access, constants, readFile, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
@@ -251,16 +252,41 @@ export function recommendedLabSettingsPatch(current: {
 	return { packages, extensions };
 }
 
+/**
+ * Default lab paths. Prefer the D-SSD personal layout used by
+ * `gs-lab/launch-voice-lab.sh` when present; fall back to legacy $HOME layout.
+ * Every path can still be overridden via GENTLE_VOICE_LAB_* env vars.
+ */
 export function defaultLabPaths(home = process.env.HOME?.trim() || ""): PreflightPaths {
-	const root = process.env.GENTLE_VOICE_LAB_ROOT?.trim() || join(home, "gentle-voice-lab");
+	const dssdPersonal = join(home, "D-SSD", "personal");
+	const dssdLab = join(dssdPersonal, "gs-lab");
+	const dssdGv = join(dssdPersonal, "projects", "gentle-voice");
+	const dssdGs = join(dssdPersonal, "projects", "gentle-shell");
+
+	const legacyRoot = join(home, "gentle-voice-lab");
+	// Prefer D-SSD layout when the lab directory exists (unless LAB_ROOT overrides).
+	const useDssd = !process.env.GENTLE_VOICE_LAB_ROOT?.trim() && existsSync(dssdLab);
+
+	const root = process.env.GENTLE_VOICE_LAB_ROOT?.trim()
+		|| (useDssd ? dssdLab : legacyRoot);
+
 	return {
 		labHome: process.env.GENTLE_VOICE_LAB_AGENT?.trim() || join(root, "agent"),
-		experimentalGs: process.env.GENTLE_VOICE_LAB_GS?.trim() || join(home, "gentle-shell"),
+		experimentalGs:
+			process.env.GENTLE_VOICE_LAB_GS?.trim()
+			|| (useDssd ? dssdGs : join(home, "gentle-shell")),
 		voiceExtension:
 			process.env.GENTLE_VOICE_LAB_EXTENSION?.trim()
-			|| join(home, "gentle-voice", "extensions", "voice.ts"),
-		launcherConfig: process.env.GENTLE_VOICE_LAB_LAUNCHER?.trim() || join(root, "launcher-config.json"),
-		modelsRoot: process.env.GENTLE_VOICE_MODELS?.trim() || join(root, "models"),
+			|| (useDssd
+				? join(dssdGv, "extensions", "voice.ts")
+				: join(home, "gentle-voice", "extensions", "voice.ts")),
+		launcherConfig:
+			process.env.GENTLE_VOICE_LAB_LAUNCHER?.trim() || join(root, "launcher-config.json"),
+		modelsRoot:
+			process.env.GENTLE_VOICE_MODELS?.trim()
+			|| (useDssd
+				? join(home, "WD-Black", "gentle-voice", "models")
+				: join(root, "models")),
 	};
 }
 

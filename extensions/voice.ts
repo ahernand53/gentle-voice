@@ -48,6 +48,11 @@ import { voiceWidgetContent } from "../lib/visual/compact-widget.ts";
 import { runFirstRunPreparation } from "../lib/runtime/first-run.ts";
 import { formatCompatMarkdown } from "../lib/runtime/compat-matrix.ts";
 import {
+	createEditorHistoryBinding,
+	isLoneEscape,
+	restorePromptAfterVoiceEscape,
+} from "../lib/editor-history.ts";
+import {
 	formatStorageDiagnostics,
 	planGentleVoiceDataCleanup,
 	resolveGentleVoiceStorage,
@@ -221,6 +226,10 @@ async function runVoiceEdit(
  * Esc: cancel voice audio; if agent running, call native ctx.abort().
  * Does not consume Esc when voice is idle (menus/editor keep native behavior).
  * Returns true when the key was handled for voice.
+ *
+ * Also restores the recoverable prompt into an empty editor so Esc → Up (or the
+ * restored draft itself) recovers what the user said — voice submit bypasses
+ * Pi's typed Enter → addToHistory path unless we push history separately.
  */
 function handleVoiceEscape(
 	ctx: VoiceHostCommandContext,
@@ -236,6 +245,12 @@ function handleVoiceEscape(
 		|| session.editHold;
 	if (!session.state.enabled || !busy) return false;
 
+	const recoverable = [
+		session.pendingReviewText,
+		session.lastSubmittedText,
+		session.lastTranscript,
+	];
+
 	session.cancelVoiceAudio("escape");
 	if (session.editHold) session.endEditHold();
 
@@ -246,6 +261,8 @@ function handleVoiceEscape(
 			/* host may refuse — audio already cancelled */
 		}
 	}
+
+	restorePromptAfterVoiceEscape(ctx, recoverable);
 	updateChrome(ctx, session);
 	return true;
 }
@@ -269,6 +286,7 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 					: true;
 
 	const replyTracker = new AgentReplyTracker();
+	const editorHistory = createEditorHistoryBinding();
 	let vadFinish: (() => void) | undefined;
 	let abSession: AbCompareSession | undefined;
 	let firstRunDone = false;
@@ -407,6 +425,9 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 		session.endEditHold();
 		// Correlate this voice turn with turn_end/agent_end — agent_settled has no message.
 		replyTracker.markVoiceSubmit(randomUUID());
+		// Extension sendUserMessage skips Pi's Enter → addToHistory; push so Up works.
+		editorHistory.tryBind(lastCtx);
+		editorHistory.push(text);
 		pi.sendUserMessage?.(text);
 		// Fluent: one short line (no review spam). Dictation/manual still quiet.
 		if (lastCtx && !session.config.behavior.fluentConversation) {
@@ -504,15 +525,14 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 
 	// Esc coordination via raw terminal input — only when voice is busy.
 	// Does not register a global Esc shortcut (preserves menus/editor when idle).
+	// Arrow keys are CSI (\x1b[A) — must NOT be treated as Esc (isLoneEscape).
 	const attachEscape = (ctx: VoiceHostCommandContext) => {
+		editorHistory.tryBind(ctx);
 		if (typeof ctx.ui.onTerminalInput !== "function") return;
 		if ((attachEscape as { done?: boolean }).done) return;
 		(attachEscape as { done?: boolean }).done = true;
 		ctx.ui.onTerminalInput((data) => {
-			// ESC / CSI sequences start with 0x1b
-			if (!data || data.charCodeAt(0) !== 0x1b) return;
-			// Lone Esc (not CSI arrow/fn): length 1 or Esc Esc
-			if (data.length > 1 && data[1] !== "\x1b") return;
+			if (!isLoneEscape(data)) return;
 			if (!lastCtx) lastCtx = ctx;
 			return handleVoiceEscape(lastCtx, session);
 		});
