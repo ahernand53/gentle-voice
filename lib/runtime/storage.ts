@@ -415,7 +415,7 @@ export function planGentleVoiceDataCleanup(
 		}
 	}
 
-	const directories = [
+	const candidates = [
 		root,
 		resolution.binDir,
 		resolution.modelsDir,
@@ -425,17 +425,41 @@ export function planGentleVoiceDataCleanup(
 		resolution.logsDir,
 	];
 
-	const allowed = reasonsDenied.length === 0;
+	// Never schedule shared/lab trees (WD-Black, Voxtype) even if GENTLE_VOICE_MODELS points there.
+	const directories = candidates
+		.map(normalizeStoragePath)
+		.filter((p) => isSafePrivateCleanupPath(p, root));
+
+	const allowed = reasonsDenied.length === 0 && directories.length > 0;
+	if (reasonsDenied.length === 0 && directories.length === 0) {
+		reasonsDenied.push("no safe private gentle-voice directories to delete");
+	}
 	return {
 		allowed,
 		storageRoot: root,
 		hostKind: resolution.hostKind,
-		directories: [...new Set(directories.map(normalizeStoragePath))],
+		directories: [...new Set(directories)],
 		reasonsDenied,
 		note: allowed
-			? "Dry-run only. Deleting these paths removes STT/TTS binaries, models, voices, cache and Gentle Voice config. It does not uninstall the npm package from Pi/GS."
+			? "Dry-run only. Deleting these paths removes STT/TTS binaries, models, voices, cache and Gentle Voice config under private gentle-voice roots. Shared trees (Voxtype/WD-Black) are never listed. Does not uninstall the npm package from Pi/GS."
 			: "Cleanup refused — see reasonsDenied.",
 	};
+}
+
+/** Private cleanup targets only — basename gentle-voice or nested under storageRoot; never WD-Black/voxtype. */
+export function isSafePrivateCleanupPath(path: string, storageRoot: string): boolean {
+	const p = normalizeStoragePath(path);
+	const root = normalizeStoragePath(storageRoot);
+	if (!p || p === sep) return false;
+	if (p.includes("WD-Black") || /[/\\]voxtype[/\\]/i.test(p) || /[/\\]voxtype$/i.test(p)) {
+		return false;
+	}
+	if (/[/\\]\.gentle-shell[/\\](versions|runtime)([/\\]|$)/.test(p)) return false;
+	const parts = p.split(/[/\\]/).filter(Boolean);
+	if (!parts.includes("gentle-voice")) return false;
+	if (isPathInside(root, p) || pathsEqual(root, p)) return true;
+	// Pi XDG siblings: ~/.config/gentle-voice, ~/.cache/gentle-voice
+	return parts[parts.length - 1] === "gentle-voice";
 }
 
 export function formatStorageDiagnostics(resolution: GentleVoiceStorageResolution): string {

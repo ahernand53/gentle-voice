@@ -1,12 +1,15 @@
 /**
  * Safe private-data cleanup for Gentle Voice (remove-complete).
  * Never touches Voxtype, WD-Black, Kokoro lab trees, other Pi packages, or GS versions/runtime.
+ *
+ * Pi standalone may split data/config/cache across XDG roots — all authorized paths
+ * come from resolveGentleVoiceStorage() and must contain a "gentle-voice" segment.
  */
 
 import { lstat, rm } from "node:fs/promises";
-import { join } from "node:path";
 import {
 	isPathInside,
+	isSafePrivateCleanupPath,
 	normalizeStoragePath,
 	planGentleVoiceDataCleanup,
 	pathsEqual,
@@ -34,9 +37,37 @@ async function isSymlink(path: string): Promise<boolean> {
 	}
 }
 
+/** True when a path segment is exactly gentle-voice (not voxtype, not WD-Black, …). */
+export function pathHasGentleVoiceSegment(path: string): boolean {
+	const parts = normalizeStoragePath(path).split(/[/\\]/).filter(Boolean);
+	return parts.some((p) => p === "gentle-voice");
+}
+
 /**
- * Delete only paths that are inside the authorized storage root.
- * Requires exact confirm token. Dry-run when confirm mismatches.
+ * A plan path is executable only if it is one of the planned directories
+ * (or nested under the storage root / another planned root that itself is gentle-voice).
+ */
+export function isAuthorizedCleanupTarget(
+	target: string,
+	plan: DataCleanupPlan,
+): { ok: true } | { ok: false; reason: string } {
+	const t = normalizeStoragePath(target);
+	const planned = new Set(plan.directories.map(normalizeStoragePath));
+	if (!planned.has(t) && !isPathInside(plan.storageRoot, t)) {
+		return { ok: false, reason: "not in cleanup plan and not under storageRoot" };
+	}
+	if (!isSafePrivateCleanupPath(t, plan.storageRoot)) {
+		return { ok: false, reason: "refuses shared/third-party or non-private path" };
+	}
+	if (!pathHasGentleVoiceSegment(t)) {
+		return { ok: false, reason: "path lacks gentle-voice segment" };
+	}
+	return { ok: true };
+}
+
+/**
+ * Delete only authorized plan paths.
+ * Requires exact confirm token. Supports dryRun.
  */
 export async function executeGentleVoiceDataCleanup(options: {
 	readonly confirm: string;
@@ -64,15 +95,15 @@ export async function executeGentleVoiceDataCleanup(options: {
 		};
 	}
 
-	const root = normalizeStoragePath(plan.storageRoot);
-	// Delete deepest paths first so parents remain until children are gone.
+	// Deepest first so children go before parents when both are listed.
 	const ordered = [...plan.directories].sort((a, b) => b.length - a.length);
 
 	for (const raw of ordered) {
 		const target = normalizeStoragePath(raw);
-		if (!isPathInside(root, target) && !pathsEqual(root, target)) {
+		const auth = isAuthorizedCleanupTarget(target, plan);
+		if (!auth.ok) {
 			skipped.push(target);
-			errors.push(`refused outside storage root: ${target}`);
+			errors.push(`${auth.reason}: ${target}`);
 			continue;
 		}
 		if (await isSymlink(target)) {
@@ -88,7 +119,13 @@ export async function executeGentleVoiceDataCleanup(options: {
 			await rm(target, { recursive: true, force: true });
 			deleted.push(target);
 		} catch (err) {
-			errors.push(`${target}: ${err instanceof Error ? err.message : String(err)}`);
+			const msg = err instanceof Error ? err.message : String(err);
+			// Missing path is fine (idempotent).
+			if (/ENOENT/i.test(msg)) {
+				skipped.push(target);
+				continue;
+			}
+			errors.push(`${target}: ${msg}`);
 		}
 	}
 
@@ -115,13 +152,9 @@ export function formatCleanupPlan(plan: DataCleanupPlan): string {
 	return lines.join("\n");
 }
 
-/** Paths that must never appear in a cleanup plan (defense in depth / docs). */
 export function forbiddenExternalRoots(): readonly string[] {
-	return [
-		join("WD-Black"),
-		"voxtype",
-		"kokoro",
-		".gentle-shell/versions",
-		".gentle-shell/runtime",
-	];
+	return ["WD-Black", "voxtype", "kokoro", ".gentle-shell/versions", ".gentle-shell/runtime"];
 }
+
+/** Re-export for callers that only need equality helpers. */
+export { pathsEqual, isPathInside, normalizeStoragePath };

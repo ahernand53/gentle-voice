@@ -19,6 +19,11 @@ Phase 3.5 — production conversation UX, honest status, safe uninstall/cleanup.
 - Help/status no longer present “phase 2C”; status distinguishes engine readiness, conversation, registered shortcuts vs OS key delivery.
 - Dictation still requires explicit `/gentle:voice send`.
 
+### Fixed (pre-publish)
+
+- Cleanup deletes Pi XDG **config** + **cache** gentle-voice roots, not only `share/` (complete remove).
+- `gentle-voice-repair-settings` repairs partial unregister (`settings` vs npm) without defaulting to `~/.pi`.
+
 ### Notes
 
 - Does not overwrite published `0.1.1`. Windows / macOS / portable Kokoro still unsupported claims.

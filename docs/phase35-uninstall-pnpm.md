@@ -1,76 +1,98 @@
-# Phase 3.5 — `pi remove` / ERR_PNPM_IGNORED_BUILDS
+# Phase 3.5 — `pi remove` / ERR_PNPM_IGNORED_BUILDS + partial repair
 
-## Root cause (verified on this machine)
+## Root cause (verified)
 
-`~/.pi/agent/settings.json` sets `npmCommand` to the local `pi-npm-gate` wrapper + `pnpm`
-(path varies per machine under `~/.local/share/pi-npm-gate/…`).
+`~/.pi/agent/settings.json` points `npmCommand` at **pi-npm-gate** + `pnpm`.
 
-`pi remove` → pi-npm-gate **passthrough** → `pnpm uninstall …` (and often a follow-up install/rebuild of the npm root).
+`pi remove` → gate **passthrough** → `pnpm` rebuild/uninstall of `~/.pi/agent/npm`.
 
-`~/.pi/agent/npm/pnpm-workspace.yaml` contains:
+`pnpm-workspace.yaml` currently has:
 
 ```yaml
 allowBuilds:
-  '@ast-grep/cli': set this to true or false
+  '@ast-grep/cli': set this to true or false   # ← INVALID (neither true nor false)
 ```
 
-That placeholder string is **not** a valid pnpm `allowBuilds` boolean. pnpm ≥11 with strict dependency builds then fails with `ERR_PNPM_IGNORED_BUILDS` for `@ast-grep/cli@0.45.0`.
+pnpm ≥11 then fails with `ERR_PNPM_IGNORED_BUILDS` for `@ast-grep/cli@0.45.0`.
 
-`@ast-grep/cli` is a **dependency of `pi-lens@4.3.0`**, not of `gentle-voice`. Gentle Voice does not introduce this package.
+**Owner of `@ast-grep/cli`:** transitive of **`pi-lens@4.3.0`**, not Gentle Voice.
 
-## Ownership split
+**pi-npm-gate** does not invent `allowBuilds`; uninstall mode is passthrough.
 
-| Layer | Role |
+### Fixture proof
+
+| `allowBuilds['@ast-grep/cli']` | Result |
 | --- | --- |
-| Gentle Voice | Package to install/remove; private data under its storage root |
-| Pi | Writes `settings.json` packages[] and drives npmCommand |
-| pi-npm-gate | Wraps pnpm for visibility; uninstall is passthrough (does not invent allowBuilds) |
-| pnpm | Enforces `allowBuilds` / ignored builds policy |
+| `set this to true or false` | `ERR_PNPM_IGNORED_BUILDS` |
+| `false` | pnpm ops proceed; **postinstall does not run** |
+| `true` | postinstall runs (copies native `ast-grep` binary into place) |
 
-## Localized fix (preserve supply-chain policy)
+## Can we fix without approving unnecessary scripts?
 
-**Do not** run `pnpm approve-builds --all`.
+**Yes — two minimal options (pick one):**
 
-Edit only `~/.pi/agent/npm/pnpm-workspace.yaml` and set an explicit decision for the known transitive:
+### Option A — unblock only (`false`) — fewest privileges
 
 ```yaml
 allowBuilds:
-  '@ast-grep/cli': true   # required by pi-lens native CLI postinstall
-  '@google/genai': true
-  esbuild: true
-  # … keep other existing entries …
+  '@ast-grep/cli': false
 ```
 
-Or set `false` if you accept pi-lens without that native helper (may degrade pi-lens features).
+- Does **not** run the `@ast-grep/cli` postinstall.
+- Enough to stop `ERR_PNPM_IGNORED_BUILDS` so `pi remove` / lockfile ops can finish.
+- **Consequence:** if `ast-grep` was never linked, **pi-lens** features that shell out to the CLI may degrade until you later set `true` and reinstall.
 
-Then retry:
+### Option B — keep pi-lens CLI working (`true`) — still single package
 
-```bash
-pi remove npm:gentle-voice
+```yaml
+allowBuilds:
+  '@ast-grep/cli': true
 ```
 
-### Optional pi-npm-gate improvement (dev only — needs consent)
+- Authorizes **only** that package’s postinstall.
+- Inspected script (`postinstall.js`): resolves the platform optional package (`@ast-grep/cli-linux-x64-gnu`, …) and **link/copy** `ast-grep` / `sg` into the package dir. No network fetch inside the script; MIT-licensed CLI.
+- Does **not** require `pnpm approve-builds --all`.
+- `pi-lens: true` is already present separately in the same file.
 
-Translate `ERR_PNPM_IGNORED_BUILDS` on stderr into a clear Spanish/English message naming the package and the `allowBuilds` key. Apply only in a **development copy** of pi-npm-gate; do not overwrite `~/.local/share/pi-npm-gate` without explicit approval.
+**Do not** use `approve-builds --all`.
 
-## State observed after failed remove (this host)
+The agent must **not** edit your real `pnpm-workspace.yaml` without explicit approval.
+
+## Partial uninstall state (verified read-only)
 
 | Artifact | State |
 | --- | --- |
-| `~/.pi/agent/settings.json` → `packages` | still contains `npm:gentle-voice` |
-| `~/.pi/agent/npm/package.json` | **no** `gentle-voice` dependency |
-| `~/.pi/agent/npm/node_modules/gentle-voice` | **absent** |
+| `settings.json` → `packages` | still has `npm:gentle-voice` |
+| `npm/package.json` deps | **no** `gentle-voice` |
+| `node_modules/gentle-voice` | **absent** |
 
-Interpretation: **partial uninstall** — settings still registered, npm root already dropped the package (or never finished linking). Pi may still try to load it from the packages list.
+→ Settings registered, npm package already gone.
 
-## Recovery (manual — no agent mutation of principal install)
+## Verifiable repair (temp-first; you apply to real Pi)
 
-1. Fix `allowBuilds['@ast-grep/cli']` as above.
-2. Remove the stale settings entry if remove still fails:
-   - Edit `~/.pi/agent/settings.json` and delete `"npm:gentle-voice"` from `packages`.
-3. Optional data cleanup (after reviewing paths):
-   - While installed: `/gentle:voice purge` then confirm token.
-   - Or: `npx --package gentle-voice@0.1.2 gentle-voice-cleanup` (after 0.1.2 is published).
-4. Reinstall when ready: `pi install npm:gentle-voice@0.1.2` (after publish) or `@0.1.1` for current latest.
+1. **Fix allowBuilds** (Option A or B above) in `~/.pi/agent/npm/pnpm-workspace.yaml`.
+2. **Unregister settings** using the packaged helper on a **copy** first:
 
-Never delete Voxtype, WD-Black, other Pi packages, or `~/.gentle-shell/{versions,runtime}`.
+```bash
+# Dry-run on a copy (safe)
+cp ~/.pi/agent/settings.json /tmp/settings-gv-repair.json
+npx --package ./ gentle-voice-repair-settings --settings /tmp/settings-gv-repair.json
+# Review output, then:
+npx --package ./ gentle-voice-repair-settings --settings /tmp/settings-gv-repair.json --write
+# Only after review, copy back — or point --settings at the real file with your approval:
+# gentle-voice-repair-settings --settings ~/.pi/agent/settings.json --write
+```
+
+The CLI **refuses** to default to `~/.pi`; `--settings` is mandatory. `--write` creates `*.bak-gentle-voice-repair`.
+
+3. Optional: `pi remove npm:gentle-voice` after allowBuilds fix (idempotent if already gone from npm).
+4. Optional data purge: `gentle-voice-cleanup` (see below) — never automatic.
+
+## Complete data cleanup (works without the npm package)
+
+`bin/gentle-voice-cleanup.mjs` resolves storage from env the same way as the extension:
+
+- **Pi standalone:** XDG `…/share|config|cache/gentle-voice`
+- **GS isolated/bundled:** `<prefix>/gentle-voice/…`
+
+Deletes only planned paths that contain a `gentle-voice` segment; refuses symlinks, Voxtype/WD-Black, GS `versions`/`runtime`. Requires `--confirm DELETE_GENTLE_VOICE_DATA`.
