@@ -14,7 +14,7 @@
 
 Speak with your already-authenticated Pi / Gentle Shell model. Gentle Voice runs **local** speech-to-text and text-to-speech. It does **not** require OpenAI, ElevenLabs, or a second login.
 
-> **Status:** `0.1.2` on npm. Linux experimental. **Windows and macOS are not supported** until real hardware smoke tests pass.  
+> **Status:** `0.1.3` on npm. Linux experimental. **Windows and macOS are not supported** until real hardware smoke tests pass.  
 > An npm publish does **not** mean universal OS compatibility.
 
 ## Requirements

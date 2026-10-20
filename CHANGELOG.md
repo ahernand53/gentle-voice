@@ -2,6 +2,15 @@
 
 All notable changes to Gentle Voice are documented here.
 
+## [0.1.3] — 2026-10-20
+
+Same Phase 3.5 release as 0.1.2. Republished because npm registry ghost-staged `0.1.2` (CLI printed success, packument never listed it; subsequent publishes hit E409 / “previously published”, and `npm stage list` is empty — known npm CLI/registry issue). Install **0.1.3** as latest.
+
+### Notes
+
+- CLI bins are `bin/*.js` so npm 11 keeps the `bin` field on publish.
+- README documents install / uninstall / cleanup / `--keep-models`.
+
 ## [0.1.2] — 2026-10-20
 
 Phase 3.5 — production conversation UX, honest status, safe uninstall/cleanup.
