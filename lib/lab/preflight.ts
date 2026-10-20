@@ -251,13 +251,16 @@ export function recommendedLabSettingsPatch(current: {
 	return { packages, extensions };
 }
 
-export function defaultLabPaths(home = "/home/erickfm"): PreflightPaths {
+export function defaultLabPaths(home = process.env.HOME?.trim() || ""): PreflightPaths {
+	const root = process.env.GENTLE_VOICE_LAB_ROOT?.trim() || join(home, "gentle-voice-lab");
 	return {
-		labHome: join(home, "D-SSD/personal/gs-lab/agent"),
-		experimentalGs: join(home, "D-SSD/personal/projects/gentle-shell"),
-		voiceExtension: join(home, "D-SSD/personal/projects/gentle-voice/extensions/voice.ts"),
-		launcherConfig: join(home, "D-SSD/personal/gs-lab/launcher-config.json"),
-		modelsRoot: join(home, "WD-Black/gentle-voice/models"),
+		labHome: process.env.GENTLE_VOICE_LAB_AGENT?.trim() || join(root, "agent"),
+		experimentalGs: process.env.GENTLE_VOICE_LAB_GS?.trim() || join(home, "gentle-shell"),
+		voiceExtension:
+			process.env.GENTLE_VOICE_LAB_EXTENSION?.trim()
+			|| join(home, "gentle-voice", "extensions", "voice.ts"),
+		launcherConfig: process.env.GENTLE_VOICE_LAB_LAUNCHER?.trim() || join(root, "launcher-config.json"),
+		modelsRoot: process.env.GENTLE_VOICE_MODELS?.trim() || join(root, "models"),
 	};
 }
 

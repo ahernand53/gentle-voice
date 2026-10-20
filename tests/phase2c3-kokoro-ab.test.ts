@@ -13,9 +13,12 @@ import {
 import {
 	createKokoroTtsAdapter,
 	labKokoroPresent,
+} from "../lib/adapters/kokoro-tts.ts";
+import {
+	applyDeveloperLabEnv,
 	LAB_KOKORO_MODEL,
 	LAB_KOKORO_VOICES,
-} from "../lib/adapters/kokoro-tts.ts";
+} from "./lab-env.ts";
 import { createStubTtsAdapter } from "../lib/adapters/stubs.ts";
 import { buildFinalUtterance } from "../lib/final-utterance.ts";
 import { PREFERRED_SHORTCUT } from "../lib/engines/contracts.ts";
@@ -50,7 +53,7 @@ test("2C.3: regression — 2+2 primary in spoken+normalized text", () => {
 
 test("2C.3: lab Kokoro artifacts present (hardware install)", { skip: skipWithoutLab }, async () => {
 	const prevLab = process.env.GENTLE_VOICE_LAB;
-	process.env.GENTLE_VOICE_LAB = "1";
+	applyDeveloperLabEnv();
 	try {
 		assert.equal(labKokoroPresent(), true);
 		await access(LAB_KOKORO_MODEL, constants.R_OK);

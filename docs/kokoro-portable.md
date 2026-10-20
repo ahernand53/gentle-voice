@@ -7,14 +7,14 @@ Status: **design**. No model downloads, no engine installs in this phase.
 - Default TTS: Kokoro (natural Spanish voice, e.g. ef_dora class).
 - Fallback: Piper (already pinned in first-run).
 - No global Python / pip / system packages.
-- No developer lab paths (WD-Black).
+- No developer hard-coded lab paths in the published package.
 - No cloud API keys.
 - Consent-gated download into host storage (`resolveGentleVoiceStorage()` root).
 - Windows / Linux / macOS when demonstrated — not claimed until smoke-tested.
 
 ## Current lab reality (not product)
 
-Lab uses a private venv + ONNX on WD-Black (`lib/adapters/kokoro-tts.ts`). Gated behind `GENTLE_VOICE_LAB=1` / `GENTLE_VOICE_REAL_AUDIO=1` since 3.4.1.
+Lab uses a private venv + ONNX configured via `GENTLE_VOICE_LAB_ROOT` / `GENTLE_VOICE_KOKORO_*` (`lib/adapters/kokoro-tts.ts`). Gated behind `GENTLE_VOICE_LAB=1` / `GENTLE_VOICE_REAL_AUDIO=1`.
 
 ## Recommended product approach
 

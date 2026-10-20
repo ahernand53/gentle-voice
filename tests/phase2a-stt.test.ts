@@ -3,14 +3,17 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { skipWithoutLab } from "./lab-env.ts";
+import {
+	skipWithoutLab,
+	applyDeveloperLabEnv,
+	LAB_VOXTYPE_GGML_SMALL,
+	LAB_WHISPER_CLI_CANDIDATE,
+} from "./lab-env.ts";
 import { access, constants, mkdir, readdir, writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
 	createWhisperSttAdapter,
-	LAB_VOXTYPE_GGML_SMALL,
-	LAB_WHISPER_CLI_CANDIDATE,
 	parseWhisperStdout,
 	readGgmlMagic,
 } from "../lib/adapters/whisper-stt.ts";
@@ -184,6 +187,7 @@ test("simulated: empty transcript notifies without submit", async () => {
 
 test("real: lab resolve picks whisper+pipewire when REAL paths exist", { skip: skipWithoutLab }, () => {
 	const prev = process.env.GENTLE_VOICE_REAL_AUDIO;
+	applyDeveloperLabEnv();
 	process.env.GENTLE_VOICE_REAL_AUDIO = "1";
 	try {
 		const lab = resolveLabVoiceAdapters({ forceStub: false });

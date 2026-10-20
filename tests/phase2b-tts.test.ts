@@ -3,11 +3,10 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { skipWithoutLab } from "./lab-env.ts";
+import { skipWithoutLab, applyDeveloperLabEnv, LAB_PIPER_DEFAULTS } from "./lab-env.ts";
 import { isWavBuffer } from "../lib/adapters/wav.ts";
 import {
 	createPiperTtsAdapter,
-	LAB_PIPER_DEFAULTS,
 	LAB_TEST_SPEAK_PHRASE,
 } from "../lib/adapters/piper-tts.ts";
 import { createPipewirePlaybackAdapter } from "../lib/adapters/pipewire-playback.ts";
@@ -292,6 +291,7 @@ test("isolation: test-speak extension path does not call sendUserMessage", async
 
 test("real: lab resolve wires piper + pipewire playback under REAL_AUDIO", { skip: skipWithoutLab }, () => {
 	const prev = process.env.GENTLE_VOICE_REAL_AUDIO;
+	applyDeveloperLabEnv();
 	process.env.GENTLE_VOICE_REAL_AUDIO = "1";
 	try {
 		const lab = resolveLabVoiceAdapters({ forceStub: false });

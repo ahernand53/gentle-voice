@@ -13,7 +13,7 @@ import {
 import { createEnergyVad } from "../lib/vad/energy-vad.ts";
 import { createFilesystemEngineProbe } from "../lib/engines/probe-fs.ts";
 import { beginSetup } from "../lib/engines/setup.ts";
-import { LAB_WHISPER_CLI_CANDIDATE } from "../lib/adapters/whisper-stt.ts";
+import { LAB_WHISPER_CLI_CANDIDATE, applyDeveloperLabEnv } from "./lab-env.ts";
 import { access, constants } from "node:fs/promises";
 import { createVoiceExtension } from "../extensions/voice.ts";
 import { createPiHostHarness } from "../lib/lab/pi-host-harness.ts";
@@ -114,7 +114,7 @@ test("2C.1: energy VAD ends after speech then hang silence", () => {
 test("2C.1: filesystem probe finds lab whisper-cli under WD-Black", { skip: skipWithoutLab }, async () => {
 	await access(LAB_WHISPER_CLI_CANDIDATE, constants.X_OK);
 	const prevLab = process.env.GENTLE_VOICE_LAB;
-	process.env.GENTLE_VOICE_LAB = "1";
+	applyDeveloperLabEnv();
 	try {
 		const setup = await beginSetup({ probe: createFilesystemEngineProbe() });
 		const whisper = setup.report.stt.find((e) => e.spec.id === "whisper-cpp");

@@ -11,7 +11,7 @@ Gentle Shell isolation + lab-path hard gate for published product behaviour.
 - `resolveGentleVoiceStorage()` — env-only host detection (Pi standalone, GS bundled, GS isolated, `--link`, custom `--home`, explicit overrides).
 - Storage under `<GENTLE_SHELL_PREFIX>/gentle-voice/` (or `~/.gentle-shell/gentle-voice/`) with `bin/`, `models/`, `config/`, `cache/`, `tmp/`, `logs/`.
 - `/gentle:voice storage` — diagnostics + optional data-cleanup dry-run (never deletes automatically).
-- `isGentleVoiceLabPathsAllowed()` — single gate for WD-Black / Voxtype / developer absolutes.
+- `isGentleVoiceLabPathsAllowed()` + `lib/runtime/lab-paths.ts` — lab paths only from env (no hard-coded homes in the tarball).
 - Isolation + lab-gate regression tests (temporary HOME/prefix sentinels; no real Pi/GS mutation).
 - Design doc: `docs/kokoro-portable.md` (ONNX Runtime path; no downloads in this release).
 
@@ -20,14 +20,15 @@ Gentle Shell isolation + lab-path hard gate for published product behaviour.
 - Inside GS isolated/bundled sessions, first-run downloads no longer use ambient `~/.local/share/gentle-voice` / XDG paths (unless `GENTLE_VOICE_*` overrides).
 - `--link` keeps the portable Pi layout (does not treat GS prefix alone as isolation).
 - `labKokoroPresent()` returns false without probing disk when lab is OFF.
-- Filesystem engine probe no longer scans WD-Black / Voxtype / `/home/erickfm/...` unless `GENTLE_VOICE_LAB=1` or `GENTLE_VOICE_REAL_AUDIO=1`.
-- Product TTS default remains **Piper**; Kokoro stays lab-only until a portable ONNX ship.
+- Filesystem engine probe no longer scans third-party/lab trees unless lab env is set.
+- Product TTS default remains **Piper**; Kokoro stays lab-only (env-configured) until a portable ONNX ship.
+- `lib/lab/*` and machine-specific docs excluded from the npm tarball.
 
 ### Notes
 
 - Does **not** publish over `0.1.0`; patch `0.1.1` only after PR merge + explicit publish authorization.
 - Windows / macOS remain unsupported pending real hardware smoke.
-- Existing lab models on WD-Black / Voxtype are **not** deleted or modified.
+- Existing external lab models are **not** deleted or modified.
 
 ## [0.1.0] — 2026-10-19
 

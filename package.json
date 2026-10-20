@@ -28,8 +28,11 @@
 	"files": [
 		"assets/",
 		"docs/",
+		"!docs/experimental-integration.md",
 		"extensions/",
 		"lib/",
+		"!lib/lab/",
+		"!lib/lab/**",
 		"README.md",
 		"CHANGELOG.md",
 		"LICENSE",

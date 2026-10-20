@@ -6,7 +6,11 @@
 import { access, constants, open, readdir, readFile, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { homedir } from "node:os";
-import { isGentleVoiceLabPathsAllowed } from "../runtime/lab-gate.ts";
+import {
+	resolveLabBinDirs,
+	resolveLabModelRoots,
+	resolveLabWhisperPaths,
+} from "../runtime/lab-paths.ts";
 import { resolveRuntimeLayout } from "../runtime/paths.ts";
 import type { EngineProbe, EngineProbeHit } from "./detect.ts";
 import type { DetectedModel, EngineId } from "./contracts.ts";
@@ -22,8 +26,6 @@ export interface FsProbeOptions {
 	readonly home?: string;
 }
 
-const LAB_WHISPER_ABS = "/home/erickfm/WD-Black/gentle-voice/bin/whisper-cli";
-
 /** Product + optional lab search roots (exported for regression tests). */
 export function defaultProbeSearchRoots(input: {
 	readonly env?: NodeJS.ProcessEnv;
@@ -37,28 +39,17 @@ export function defaultProbeSearchRoots(input: {
 		join(home, ".local", "bin"),
 		"/usr/local/bin",
 		"/usr/bin",
+		...resolveLabBinDirs(env),
 	];
 	const modelRoots = [
 		layout.modelsDir,
 		join(layout.modelsDir, "whisper"),
 		join(layout.modelsDir, "piper"),
 		env.GENTLE_VOICE_MODELS?.trim() ?? "",
+		...resolveLabModelRoots(env),
 	].filter(Boolean);
 
-	if (isGentleVoiceLabPathsAllowed(env)) {
-		pathDirs.push(
-			join(home, "WD-Black", "gentle-voice", "bin"),
-			LAB_WHISPER_ABS.replace(/\/whisper-cli$/, ""),
-		);
-		modelRoots.push(
-			join(home, ".local", "share", "voxtype", "models"),
-			join(home, ".local", "share", "piper-voices"),
-			join(home, "WD-Black", "gentle-voice", "models", "whisper"),
-			join(home, "WD-Black", "gentle-voice", "models", "piper"),
-		);
-	}
-
-	return { pathDirs, modelRoots };
+	return { pathDirs: [...new Set(pathDirs)], modelRoots: [...new Set(modelRoots)] };
 }
 
 async function isExecutable(path: string): Promise<boolean> {
@@ -192,7 +183,7 @@ async function collectPiperVoices(roots: readonly string[]): Promise<DetectedMod
 
 /**
  * Build a probe that scans the local machine (Linux-oriented defaults).
- * Lab absolute paths (WD-Black / Voxtype) only when GENTLE_VOICE_LAB or REAL_AUDIO is 1.
+ * Lab paths only when GENTLE_VOICE_LAB/REAL_AUDIO is 1 and env roots are set.
  * Product default: private Gentle Voice storage + PATH — never hard-coded developer homes.
  */
 export function createFilesystemEngineProbe(options: FsProbeOptions = {}): EngineProbe {
@@ -201,14 +192,14 @@ export function createFilesystemEngineProbe(options: FsProbeOptions = {}): Engin
 	const defaults = defaultProbeSearchRoots({ env, home });
 	const dirs = pathDirs(env, options.pathDirs ?? defaults.pathDirs);
 	const modelRoots = options.modelRoots ?? defaults.modelRoots;
-	const labOn = isGentleVoiceLabPathsAllowed(env);
+	const labWhisperPaths = resolveLabWhisperPaths(env);
 
 	return {
 		async listHits(): Promise<EngineProbeHit[]> {
 			const hits: EngineProbeHit[] = [];
 
 			const envWhisper = env.GENTLE_VOICE_WHISPER_CLI?.trim();
-			const labWhisper = labOn ? LAB_WHISPER_ABS : undefined;
+			const labWhisper = labWhisperPaths?.cli;
 			const whisperBin =
 				(envWhisper && (await isExecutable(envWhisper)) ? envWhisper : undefined)
 				?? (labWhisper && (await isExecutable(labWhisper)) ? labWhisper : undefined)
@@ -227,7 +218,7 @@ export function createFilesystemEngineProbe(options: FsProbeOptions = {}): Engin
 					compatible: true,
 					external: !managedLab,
 					models: allWhisperModels,
-					version: managedLab ? "lab-managed-wd-black" : "detected-binary",
+					version: managedLab ? "lab-managed" : "detected-binary",
 				});
 			} else if (allWhisperModels.length > 0) {
 				// Model assets exist (e.g. Voxtype) but no standalone whisper.cpp CLI.

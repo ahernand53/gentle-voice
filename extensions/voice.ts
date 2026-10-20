@@ -655,7 +655,7 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 							platforms: ["linux", "win32", "darwin"] as const,
 							verifiedLocally: true,
 							licenseHint: "Apache-2.0",
-							notes: "Lab WD-Black ONNX quantized + ef_dora only",
+							notes: "Lab Kokoro ONNX (env-configured paths) + ef_dora only",
 						},
 						adapter: resolved.kokoroAdapter,
 					});

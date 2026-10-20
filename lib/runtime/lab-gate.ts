@@ -1,5 +1,5 @@
 /**
- * Single gate for developer-lab absolute paths (WD-Black, Voxtype, hard-coded homes).
+ * Single gate for experimental lab path probes (env-configured trees only).
  * Product builds must keep this OFF so npm packages never touch lab paths.
  */
 

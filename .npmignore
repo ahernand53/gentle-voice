@@ -1,0 +1,11 @@
+# Keep tests/scripts out (also not listed in package.json files).
+tests/
+scripts/
+*.tgz
+
+# Lab harness / developer launch helpers — not required at runtime
+# (extension does not import lib/lab/*).
+lib/lab/
+
+# Docs with machine-specific launch recipes
+docs/experimental-integration.md

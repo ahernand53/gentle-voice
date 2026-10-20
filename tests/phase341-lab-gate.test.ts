@@ -12,12 +12,15 @@ import { test } from "node:test";
 import {
 	createKokoroTtsAdapter,
 	labKokoroPresent,
-	LAB_KOKORO_PYTHON,
 } from "../lib/adapters/kokoro-tts.ts";
 import { resolveLabVoiceAdapters } from "../lib/adapters/lab-resolve.ts";
 import { defaultProbeSearchRoots } from "../lib/engines/probe-fs.ts";
 import { isGentleVoiceLabPathsAllowed } from "../lib/runtime/lab-gate.ts";
 import { resolveGentleVoiceStorage } from "../lib/runtime/storage.ts";
+import {
+	applyDeveloperLabEnv,
+	LAB_KOKORO_PYTHON,
+} from "./lab-env.ts";
 
 function posix(p: string): string {
 	return p.replace(/\\/g, "/");
@@ -66,15 +69,14 @@ test("3.4.1 lab OFF: labKokoroPresent is false and does not require WD-Black acc
 });
 
 test("3.4.1 lab ON: labKokoroPresent may be true only after probing lab paths", () => {
-	withLabEnv(true, () => {
-		assert.equal(isGentleVoiceLabPathsAllowed(), true);
-		const present = labKokoroPresent();
-		// On CI without WD-Black → false; on developer lab → true. Both OK.
-		assert.equal(typeof present, "boolean");
-		if (present) {
-			assert.equal(labKokoroPresent({ GENTLE_VOICE_LAB: "1" }), true);
-		}
-	});
+	applyDeveloperLabEnv();
+	assert.equal(isGentleVoiceLabPathsAllowed(), true);
+	const present = labKokoroPresent();
+	// On CI without lab tree → false; on developer lab with env → true.
+	assert.equal(typeof present, "boolean");
+	if (present) {
+		assert.equal(labKokoroPresent(), true);
+	}
 });
 
 test("3.4.1 lab OFF: resolveLabVoiceAdapters never marks kokoroReady (even if WD-Black has Kokoro)", () => {
@@ -140,19 +142,24 @@ test("3.4.1 probe roots: lab OFF excludes WD-Black and Voxtype absolutes", () =>
 	assert.ok(blob.includes("gentle-voice"));
 });
 
-test("3.4.1 probe roots: lab ON includes WD-Black / voxtype under home", () => {
+test("3.4.1 probe roots: lab ON includes only env-configured lab roots", () => {
 	const home = "/tmp/gv-probe-lab-home";
+	const labRoot = "/tmp/gv-lab-root";
 	const { pathDirs, modelRoots } = defaultProbeSearchRoots({
 		env: {
 			HOME: home,
 			GENTLE_VOICE_LAB: "1",
+			GENTLE_VOICE_LAB_ROOT: labRoot,
+			GENTLE_VOICE_VOXTYPE_MODELS_DIR: `${labRoot}/voxtype-models`,
 			XDG_DATA_HOME: `${home}/.local/share`,
 		},
 		home,
 	});
 	const blob = [...pathDirs, ...modelRoots].map(posix).join("\n");
-	assert.ok(blob.includes("WD-Black"));
-	assert.ok(blob.includes("voxtype"));
+	assert.ok(blob.includes(labRoot));
+	assert.ok(blob.includes("voxtype-models"));
+	assert.ok(!blob.includes("/home/erickfm"));
+	assert.ok(!blob.includes("WD-Black"));
 });
 
 test("3.4.1 GS bundled storage stays under prefix (regression)", () => {

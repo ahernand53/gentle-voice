@@ -107,7 +107,7 @@ export const TTS_PROVIDER_RESEARCH_CATALOG: readonly TtsProviderInfo[] = Object.
 		verifiedLocally: true,
 		licenseHint: "Apache-2.0 (hexgrad/Kokoro-82M + onnx-community ONNX)",
 		notes:
-			"Lab-installed under WD-Black (model_quantized.onnx + ef_dora_only.npz). Adapter kokoro-ef-dora. Human A/B vs Piper still required before changing default.",
+			"Lab-only via GENTLE_VOICE_LAB + GENTLE_VOICE_LAB_ROOT / GENTLE_VOICE_KOKORO_*. Adapter kokoro-ef-dora. Human A/B vs Piper still required before changing default.",
 	}),
 	Object.freeze({
 		id: "kokoro-em-alex",
@@ -117,7 +117,7 @@ export const TTS_PROVIDER_RESEARCH_CATALOG: readonly TtsProviderInfo[] = Object.
 		verifiedLocally: false,
 		licenseHint: "Apache-2.0 (hexgrad/Kokoro-82M)",
 		notes:
-			"Official Spanish male voice. Same install surface as ef_dora. Candidate for A/B vs Piper daniela-high after authorized download into WD-Black only.",
+			"Official Spanish male voice. Same install surface as ef_dora. Candidate for A/B vs Piper daniela-high after authorized lab download.",
 	}),
 	Object.freeze({
 		id: "kokoro-es",

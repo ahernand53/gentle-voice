@@ -13,7 +13,6 @@ import { createPipewireCaptureAdapter } from "./pipewire-capture.ts";
 import { createPipewirePlaybackAdapter } from "./pipewire-playback.ts";
 import {
 	createPiperTtsAdapter,
-	LAB_PIPER_DEFAULTS,
 } from "./piper-tts.ts";
 import {
 	createKokoroTtsAdapter,
@@ -27,11 +26,14 @@ import {
 } from "./stubs.ts";
 import {
 	createWhisperSttAdapter,
-	LAB_VOXTYPE_GGML_SMALL,
-	LAB_WHISPER_CLI_CANDIDATE,
 } from "./whisper-stt.ts";
 import { DEFAULT_WHISPER_INITIAL_PROMPT } from "../stt/corrections.ts";
 import { isGentleVoiceLabPathsAllowed } from "../runtime/lab-gate.ts";
+import {
+	resolveLabPiperPaths,
+	resolveLabTmpDir,
+	resolveLabWhisperPaths,
+} from "../runtime/lab-paths.ts";
 import { resolveRuntimeLayout } from "../runtime/paths.ts";
 import { resolveVoiceAdapters, type VoiceAdapterBundle } from "./platform.ts";
 import {
@@ -69,8 +71,8 @@ function resolveTmpDir(options?: { config?: VoiceConfig; tmpDir?: string }): str
 	if (process.env.GENTLE_VOICE_TMP) return process.env.GENTLE_VOICE_TMP;
 	const layout = resolveRuntimeLayout();
 	if (existsSync(layout.tmpDir)) return layout.tmpDir;
-	const wd = "/home/erickfm/WD-Black/gentle-voice/tmp";
-	if (isGentleVoiceLabPathsAllowed() && existsSync(wd)) return wd;
+	const labTmp = resolveLabTmpDir();
+	if (labTmp && existsSync(labTmp)) return labTmp;
 	return join(tmpdir(), "gentle-voice");
 }
 
@@ -102,12 +104,10 @@ function resolvePiperFromEnvOrLab(): {
 			voiceConfigPath: readableSync(runtimeVoiceCfg) ? runtimeVoiceCfg : `${runtimeVoice}.json`,
 		};
 	}
-	if (!isGentleVoiceLabPathsAllowed()) return undefined;
-	if (
-		exeSync(LAB_PIPER_DEFAULTS.piperPath)
-		&& readableSync(LAB_PIPER_DEFAULTS.voiceModelPath)
-	) {
-		return { ...LAB_PIPER_DEFAULTS };
+	const lab = resolveLabPiperPaths();
+	if (!lab) return undefined;
+	if (exeSync(lab.piperPath) && readableSync(lab.voiceModelPath)) {
+		return lab;
 	}
 	return undefined;
 }
@@ -124,16 +124,13 @@ function resolveWhisperFromRuntimeOrLab(config?: VoiceConfig): {
 	const envCli = process.env.GENTLE_VOICE_WHISPER_CLI?.trim();
 	const envModel = process.env.GENTLE_VOICE_WHISPER_MODEL?.trim()
 		|| config?.engines.sttModel?.trim();
+	const labWhisper = resolveLabWhisperPaths();
 	const cli = (envCli && exeSync(envCli) ? envCli : undefined)
 		|| (exeSync(runtimeCli) ? runtimeCli : undefined)
-		|| (isGentleVoiceLabPathsAllowed() && exeSync(LAB_WHISPER_CLI_CANDIDATE)
-			? LAB_WHISPER_CLI_CANDIDATE
-			: undefined);
+		|| (labWhisper?.cli && exeSync(labWhisper.cli) ? labWhisper.cli : undefined);
 	const model = (envModel && readableSync(envModel) ? envModel : undefined)
 		|| (readableSync(runtimeModel) ? runtimeModel : undefined)
-		|| (isGentleVoiceLabPathsAllowed() && readableSync(LAB_VOXTYPE_GGML_SMALL)
-			? LAB_VOXTYPE_GGML_SMALL
-			: undefined);
+		|| (labWhisper?.model && readableSync(labWhisper.model) ? labWhisper.model : undefined);
 	if (cli && model) return { cli, model };
 	return undefined;
 }

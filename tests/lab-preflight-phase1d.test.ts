@@ -3,7 +3,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { skipWithoutLab } from "./lab-env.ts";
+import { skipWithoutLab, developerDefaultLabPaths } from "./lab-env.ts";
 import { mkdir, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -14,8 +14,9 @@ import {
 	engramCompanionPinned,
 	recommendedLabSettingsPatch,
 	isPiPrettyResolvable,
-	defaultLabPaths,
 } from "../lib/lab/preflight.ts";
+
+const defaultLabPaths = developerDefaultLabPaths;
 
 test("real: NO_AUTO_SETUP alone does not imply companion will not install", async () => {
 	// Empty temp home → would install companion
