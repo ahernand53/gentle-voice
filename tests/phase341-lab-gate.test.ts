@@ -22,8 +22,9 @@ import {
 	LAB_KOKORO_PYTHON,
 } from "./lab-env.ts";
 
+/** Slash-normalize and drop Windows drive letters so `/tmp/...` asserts work on win32 CI. */
 function posix(p: string): string {
-	return p.replace(/\\/g, "/");
+	return p.replace(/\\/g, "/").replace(/^[A-Za-z]:/, "");
 }
 
 function withLabEnv(

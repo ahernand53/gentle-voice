@@ -16,8 +16,9 @@ import {
 	resolveGentleVoiceStorage,
 } from "../lib/runtime/storage.ts";
 
+/** Slash-normalize and drop Windows drive letters so `/tmp/...` asserts work on win32 CI. */
 function posix(p: string): string {
-	return p.replace(/\\/g, "/");
+	return p.replace(/\\/g, "/").replace(/^[A-Za-z]:/, "");
 }
 
 function sentinelEnv(root: string): NodeJS.ProcessEnv {
