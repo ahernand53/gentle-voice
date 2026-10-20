@@ -15,6 +15,7 @@ import type { VoiceConfig } from "./config.ts";
 import { DEFAULT_VOICE_CONFIG } from "./config.ts";
 import { buildFinalUtterance } from "./final-utterance.ts";
 import { AbortError, CancellationBag, isAbortError } from "./process-cancel.ts";
+import { renderForSpeech } from "./tts/speech-renderer.ts";
 import {
 	applySttCorrections,
 	DEFAULT_WHISPER_INITIAL_PROMPT,
@@ -425,7 +426,11 @@ export class VoiceSession {
 		}
 		this.#speakEpoch += 1;
 		this.#bag.abortAll();
-		this.#pendingSpeakText = trimmed;
+		this.#pendingSpeakText = renderForSpeech(trimmed, {
+			language: this.#config.engines.language === "auto" ? "es" : this.#config.engines.language,
+			mode: this.#config.behavior.speechMode,
+			cwd: process.cwd(),
+		}).spoken;
 		this.dispatch({ type: "SPEAK_NOW" });
 		await this.flush();
 		if (this.#state.muted) return "muted";
@@ -543,6 +548,8 @@ export class VoiceSession {
 			minCharsPerUnit: 140,
 			softFlushChars: 280,
 			longSentenceChars: 200,
+			speechMode: this.#config.behavior.speechMode,
+			cwd: process.cwd(),
 		});
 		this.#streamQueue.begin();
 		this.#streamActive = true;
@@ -761,7 +768,13 @@ export class VoiceSession {
 		// Invalidate any prior playback before starting a new spoken conclusion.
 		this.#speakEpoch += 1;
 		this.#bag.abortAll();
-		this.#pendingSpeakText = maySpeak ? utterance.text : "";
+		this.#pendingSpeakText = maySpeak
+			? renderForSpeech(utterance.text, {
+				language: this.#config.engines.language === "auto" ? "es" : this.#config.engines.language,
+				mode: this.#config.behavior.speechMode,
+				cwd: process.cwd(),
+			}).spoken
+			: "";
 		const willSpeak = Boolean(maySpeak && this.#pendingSpeakText);
 		this.dispatch({ type: "AGENT_SETTLED", speak: willSpeak });
 		if (!willSpeak) {

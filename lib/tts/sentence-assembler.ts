@@ -5,8 +5,7 @@
  * Does not invent content. Ignores thinking/tools (caller feeds text only).
  */
 
-import { markdownToSpeakable } from "./markdown-for-tts.ts";
-import { normalizeForTts } from "./normalize-for-tts.ts";
+import { renderForSpeech, type SpeechRenderMode } from "./speech-renderer.ts";
 
 const SENTENCE_END = /([.!?…])(?:\s+|$)/;
 
@@ -29,6 +28,8 @@ export interface SentenceAssemblerOptions {
 	readonly minCharsPerUnit?: number;
 	/** Always emit a single very long sentence alone (avoid huge first wait). */
 	readonly longSentenceChars?: number;
+	readonly speechMode?: SpeechRenderMode;
+	readonly cwd?: string;
 }
 
 /**
@@ -44,6 +45,8 @@ export class SentenceAssembler {
 	#minSentences: number;
 	#minChars: number;
 	#longSentenceChars: number;
+	#speechMode: SpeechRenderMode;
+	#cwd?: string;
 	/** Completed sentences waiting to be grouped into a speak unit. */
 	#pending: string[] = [];
 	#emittedConcat = "";
@@ -55,6 +58,16 @@ export class SentenceAssembler {
 		this.#minSentences = Math.max(1, options.minSentencesPerUnit ?? 2);
 		this.#minChars = options.minCharsPerUnit ?? 140;
 		this.#longSentenceChars = options.longSentenceChars ?? 200;
+		this.#speechMode = options.speechMode ?? "natural";
+		this.#cwd = options.cwd;
+	}
+
+	#render(raw: string): string {
+		return renderForSpeech(raw, {
+			language: this.#language,
+			mode: this.#speechMode,
+			cwd: this.#cwd,
+		}).spoken.trim();
 	}
 
 	get buffered(): string {
@@ -90,7 +103,7 @@ export class SentenceAssembler {
 	}
 
 	remainderForFinal(finalPlain: string): string {
-		const want = normalizeForTts(markdownToSpeakable(finalPlain), this.#language).trim();
+		const want = this.#render(finalPlain);
 		const already = this.#emittedConcat.trim() || this.#spokenConcat.trim();
 		if (!want) return "";
 		if (!already) return want;
@@ -179,7 +192,7 @@ export class SentenceAssembler {
 
 	#toUnit(raw: string): AssembledUnit | undefined {
 		if (!raw || raw.length < 2) return undefined;
-		const speakable = normalizeForTts(markdownToSpeakable(raw), this.#language).trim();
+		const speakable = this.#render(raw);
 		if (!speakable || speakable.length < 2) return undefined;
 		this.#seq += 1;
 		this.#emitted += 1;

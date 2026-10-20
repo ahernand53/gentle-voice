@@ -1,0 +1,50 @@
+{
+  "generatedAt": "2026-10-20T00:57:46.988Z",
+  "mode": "real_lab_adapters",
+  "clock": "performance.now() (monotonic)",
+  "conditions": {
+    "node": "v26.1.0",
+    "platform": "linux",
+    "arch": "x64",
+    "lab": true,
+    "whisperCli": "$HOME/LAB_ROOT/gentle-voice/bin/whisper-cli",
+    "whisperModel": "$HOME/.local/share/voxtype/models/ggml-small.bin",
+    "piper": "$HOME/.local/bin/piper",
+    "piperVoice": "$HOME/.local/share/piper-voices/es_AR-daniela-high.onnx",
+    "note": "Synthetic sine PCM for STT (not human speech) — measures engine wall time, not recognition quality.",
+    "sttAvailability": {
+      "status": "ready",
+      "detail": "whisper_ready_execute"
+    },
+    "ttsAvailability": {
+      "status": "ready",
+      "detail": "piper_ready_execute"
+    }
+  },
+  "stagesMs": {
+    "vadProbeLoopWallMs": 5.81,
+    "vadConfiguredHangMs": 1200,
+    "vadConfiguredPostRollMs": 200,
+    "vadProductEndOfUtteranceAudioMs": 1400,
+    "vadNote": "Product adds ~silenceHangMs+postRollMs of AUDIO time after last speech before STT. Probe loop wall time is not that delay.",
+    "sttWallMs": 3842.67,
+    "sttTextChars": 0,
+    "sttTextPreview": "",
+    "ttsWallMs": 2233.33,
+    "ttsAudioBytes": 173612,
+    "ttsMetrics": {
+      "synthesizeMs": 2232,
+      "outputBytes": 173612,
+      "sampleRateHz": 22050,
+      "channels": 1,
+      "durationSec": 3.93578231292517,
+      "textChars": 80
+    },
+    "playbackMs": null,
+    "playbackNote": "Not measured — requires interactive PipeWire session.",
+    "firstLlmDeltaMs": null,
+    "llmNote": "Not measured — would consume tokens; out of scope for this probe.",
+    "pipelineEngineOnlyMs": 7476,
+    "pipelineNote": "Sum of configured VAD audio hang+postRoll + measured STT wall + measured TTS wall. Excludes mic I/O, LLM, and playback."
+  }
+}

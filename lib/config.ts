@@ -7,6 +7,7 @@
 import { join } from "node:path";
 import type { VoiceMode, VoicePlatform } from "./contracts.ts";
 import { resolveRuntimeLayout } from "./runtime/paths.ts";
+import type { SpeechRenderMode } from "./tts/speech-renderer.ts";
 
 export const VOICE_CONFIG_SCHEMA = "gentle-voice.config/v1" as const;
 
@@ -80,6 +81,11 @@ export interface VoiceBehaviorConfig {
 	 * Lab fluent conversation only.
 	 */
 	echoSettleMs: number;
+	/**
+	 * How agent text is transformed for TTS only (never mutates written reply).
+	 * natural | detailed | verbatim
+	 */
+	speechMode: SpeechRenderMode;
 }
 
 export interface VoiceConfig {
@@ -111,11 +117,13 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = Object.freeze({
 		speakWarnings: true,
 		autoSubmitTranscript: false,
 		fluentConversation: false,
-		vadSpeechThreshold: 0.012,
+		/** Slightly more sensitive for quiet close-mic speech (phase 3.6). */
+		vadSpeechThreshold: 0.009,
 		vadMaxIntraPauseMs: 450,
 		visualWaves: true,
 		visualFps: 12,
 		echoSettleMs: 350,
+		speechMode: "natural" as SpeechRenderMode,
 	}),
 });
 
@@ -272,6 +280,13 @@ export function validateVoiceConfig(input: unknown): VoiceConfigValidation {
 				errors,
 				DEFAULT_VOICE_CONFIG.behavior.echoSettleMs,
 			),
+			speechMode: ((): SpeechRenderMode => {
+				const v = behaviorIn.speechMode;
+				if (v === undefined) return DEFAULT_VOICE_CONFIG.behavior.speechMode;
+				if (v === "natural" || v === "detailed" || v === "verbatim") return v;
+				errors.push("behavior.speechMode must be natural|detailed|verbatim");
+				return DEFAULT_VOICE_CONFIG.behavior.speechMode;
+			})(),
 		},
 	};
 
