@@ -122,7 +122,7 @@ test("3.5b execute after simulated package removal via CLI from repo bin", async
 	await mkdir(join(data, "bin"), { recursive: true });
 	await writeFile(join(data, "bin", "whisper-cli"), "x");
 	// Simulate: package gone — only CLI from this repo checkout remains.
-	const bin = join(repoRoot, "bin", "gentle-voice-cleanup.mjs");
+	const bin = join(repoRoot, "bin", "gentle-voice-cleanup.js");
 	const cleanEnv = {
 		...process.env,
 		HOME: base,
@@ -194,7 +194,7 @@ test("3.5b partial uninstall detection + settings repair (temp copy only)", asyn
 	assert.deepEqual(plan.removed, ["npm:gentle-voice"]);
 	assert.ok(plan.kept.includes("npm:pi-lens@4.3.0"));
 
-	const bin = join(repoRoot, "bin", "gentle-voice-repair-settings.mjs");
+	const bin = join(repoRoot, "bin", "gentle-voice-repair-settings.js");
 	const dry = spawnSync(
 		process.execPath,
 		["--experimental-strip-types", bin, "--settings", settingsPath],

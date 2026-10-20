@@ -90,7 +90,7 @@ The CLI **refuses** to default to `~/.pi`; `--settings` is mandatory. `--write` 
 
 ## Complete data cleanup (works without the npm package)
 
-`bin/gentle-voice-cleanup.mjs` resolves storage from env the same way as the extension:
+`bin/gentle-voice-cleanup.js` resolves storage from env the same way as the extension:
 
 - **Pi standalone:** XDG `…/share|config|cache/gentle-voice`
 - **GS isolated/bundled:** `<prefix>/gentle-voice/…`

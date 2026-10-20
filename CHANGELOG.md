@@ -25,6 +25,8 @@ Phase 3.5 — production conversation UX, honest status, safe uninstall/cleanup.
 - Cleanup deletes Pi XDG **config** + **cache** gentle-voice roots, not only `share/` (complete remove).
 - `gentle-voice-repair-settings` repairs partial unregister (`settings` vs npm) without defaulting to `~/.pi`.
 - Windows CI path asserts in cleanup tests (normalize `\` vs `/`).
+- CLI bin paths use `.js` (npm 11 was stripping `.mjs` bin entries on publish).
+- README documents install, uninstall, purge/cleanup, and `--keep-models`.
 
 ### Notes
 
