@@ -77,6 +77,11 @@ export interface VoiceBehaviorConfig {
 	/** Optional path to silero_vad.onnx (else GENTLE_VOICE_SILERO_VAD). */
 	sileroModelPath?: string;
 	/**
+	 * Phase 3.6 inc-2: provisional Whisper while listening (UI only).
+	 * Final submit still waits for VAD end + full STT. Env GENTLE_VOICE_INCREMENTAL_STT overrides.
+	 */
+	incrementalStt: boolean;
+	/**
 	 * Phase 2D: show real-PCM Unicode wave bars in the aboveEditor widget.
 	 * When false, chrome stays single-line (no animation / no meter paint).
 	 */
@@ -95,12 +100,36 @@ export interface VoiceBehaviorConfig {
 	speechMode: SpeechRenderMode;
 }
 
+/**
+ * Voice AI — optional second LLM turn for conversational narration.
+ * Model/effort come from GS `/gentle:profiles` role (default `voice-ai`), not duplicated here.
+ */
+export interface VoiceAiConfig {
+	/** Master switch. Lab may enable via GENTLE_VOICE_AI=1. */
+	enabled: boolean;
+	/** Profile routing role name (not a top-level profile). */
+	role: string;
+	/** When role is absent: use profile orchestrator / active model for narration. */
+	fallback: "orchestrator";
+	/** When role invalid or API fails: Speech Renderer only. */
+	onError: "deterministic";
+	style: "natural";
+	/**
+	 * after_settle — wait for orchestrator final text, narrate, then stream TTS.
+	 * off — never call narrator LLM (deterministic stream of orchestrator text).
+	 */
+	streaming: "after_settle" | "off";
+	timeoutMs: number;
+	maxInputChars: number;
+}
+
 export interface VoiceConfig {
 	schema: typeof VOICE_CONFIG_SCHEMA;
 	enabled: boolean;
 	paths: VoicePathsConfig;
 	engines: VoiceEnginesConfig;
 	behavior: VoiceBehaviorConfig;
+	voiceAi: VoiceAiConfig;
 }
 
 export const DEFAULT_VOICE_CONFIG: VoiceConfig = Object.freeze({
@@ -128,12 +157,42 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = Object.freeze({
 		vadSpeechThreshold: 0.009,
 		vadMaxIntraPauseMs: 450,
 		vadBackend: "auto" as const,
+		/** Off by default in product; GS-Lab enables via env. */
+		incrementalStt: false,
 		visualWaves: true,
 		visualFps: 12,
 		echoSettleMs: 350,
 		speechMode: "natural" as SpeechRenderMode,
 	}),
+	voiceAi: Object.freeze({
+		enabled: false,
+		role: "voice-ai",
+		fallback: "orchestrator" as const,
+		onError: "deterministic" as const,
+		style: "natural" as const,
+		streaming: "after_settle" as const,
+		timeoutMs: 25_000,
+		maxInputChars: 8_000,
+	}),
 });
+
+/**
+ * Process lock for Voice AI. Unset leaves the config as-is so the preference
+ * file and conversational mode can still decide. Does not write profiles.
+ */
+export function applyVoiceAiEnvOverrides(
+	config: VoiceConfig,
+	env: NodeJS.ProcessEnv = process.env,
+): VoiceConfig {
+	const flag = env.GENTLE_VOICE_AI?.trim().toLowerCase();
+	if (flag === "1" || flag === "true" || flag === "on") {
+		return { ...config, voiceAi: { ...config.voiceAi, enabled: true } };
+	}
+	if (flag === "0" || flag === "false" || flag === "off") {
+		return { ...config, voiceAi: { ...config.voiceAi, enabled: false } };
+	}
+	return config;
+}
 
 export type VoiceConfigValidation =
 	| { ok: true; config: VoiceConfig }
@@ -190,6 +249,10 @@ export function validateVoiceConfig(input: unknown): VoiceConfigValidation {
 	const behaviorIn = isPlainObject(input.behavior) ? input.behavior : {};
 	if (input.behavior !== undefined && !isPlainObject(input.behavior)) {
 		errors.push("behavior must be an object");
+	}
+	const voiceAiIn = isPlainObject(input.voiceAi) ? input.voiceAi : {};
+	if (input.voiceAi !== undefined && !isPlainObject(input.voiceAi)) {
+		errors.push("voiceAi must be an object");
 	}
 
 	const mode = behaviorIn.mode === undefined
@@ -277,6 +340,11 @@ export function validateVoiceConfig(input: unknown): VoiceConfigValidation {
 			...(typeof behaviorIn.sileroModelPath === "string" && behaviorIn.sileroModelPath.trim()
 				? { sileroModelPath: behaviorIn.sileroModelPath.trim() }
 				: {}),
+			incrementalStt: behaviorIn.incrementalStt === undefined
+				? DEFAULT_VOICE_CONFIG.behavior.incrementalStt
+				: typeof behaviorIn.incrementalStt === "boolean"
+					? behaviorIn.incrementalStt
+					: (errors.push("behavior.incrementalStt must be a boolean"), DEFAULT_VOICE_CONFIG.behavior.incrementalStt),
 			visualWaves: behaviorIn.visualWaves === undefined
 				? DEFAULT_VOICE_CONFIG.behavior.visualWaves
 				: typeof behaviorIn.visualWaves === "boolean"
@@ -305,6 +373,48 @@ export function validateVoiceConfig(input: unknown): VoiceConfigValidation {
 				errors.push("behavior.speechMode must be natural|detailed|verbatim");
 				return DEFAULT_VOICE_CONFIG.behavior.speechMode;
 			})(),
+		},
+		voiceAi: {
+			enabled: voiceAiIn.enabled === undefined
+				? DEFAULT_VOICE_CONFIG.voiceAi.enabled
+				: typeof voiceAiIn.enabled === "boolean"
+					? voiceAiIn.enabled
+					: (errors.push("voiceAi.enabled must be a boolean"), DEFAULT_VOICE_CONFIG.voiceAi.enabled),
+			role: ((): string => {
+				const v = optionalString(voiceAiIn.role, "voiceAi.role", errors);
+				if (v === undefined) return DEFAULT_VOICE_CONFIG.voiceAi.role;
+				if (!v.trim()) {
+					errors.push("voiceAi.role must be non-empty when set");
+					return DEFAULT_VOICE_CONFIG.voiceAi.role;
+				}
+				return v.trim();
+			})(),
+			fallback: "orchestrator",
+			onError: "deterministic",
+			style: "natural",
+			streaming: ((): "after_settle" | "off" => {
+				const v = voiceAiIn.streaming;
+				if (v === undefined) return DEFAULT_VOICE_CONFIG.voiceAi.streaming;
+				if (v === "after_settle" || v === "off") return v;
+				errors.push('voiceAi.streaming must be "after_settle" | "off"');
+				return DEFAULT_VOICE_CONFIG.voiceAi.streaming;
+			})(),
+			timeoutMs: requiredInt(
+				voiceAiIn.timeoutMs,
+				"voiceAi.timeoutMs",
+				1_000,
+				120_000,
+				errors,
+				DEFAULT_VOICE_CONFIG.voiceAi.timeoutMs,
+			),
+			maxInputChars: requiredInt(
+				voiceAiIn.maxInputChars,
+				"voiceAi.maxInputChars",
+				200,
+				50_000,
+				errors,
+				DEFAULT_VOICE_CONFIG.voiceAi.maxInputChars,
+			),
 		},
 	};
 

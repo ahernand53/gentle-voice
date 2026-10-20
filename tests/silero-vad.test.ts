@@ -74,6 +74,23 @@ test("resolveVad auto falls back to energy without model", async () => {
 	assert.ok(r.fallbackReason);
 });
 
+test("resolveVad without input.env still reads process.env (GS-Lab regression)", async () => {
+	const prev = process.env.GENTLE_VOICE_SILERO_VAD;
+	process.env.GENTLE_VOICE_SILERO_VAD = "/tmp/gv-silero-env-regression.onnx";
+	try {
+		const r = await resolveVad({
+			preference: "auto",
+			// Capture used to omit env entirely — must not yield silero_model_path_missing.
+			silero: {},
+		});
+		assert.equal(r.backend, "energy");
+		assert.notEqual(r.fallbackReason, "silero_model_path_missing");
+	} finally {
+		if (prev === undefined) delete process.env.GENTLE_VOICE_SILERO_VAD;
+		else process.env.GENTLE_VOICE_SILERO_VAD = prev;
+	}
+});
+
 test("resolveVad silero with runFrame selects silero", async () => {
 	const r = await resolveVad({
 		preference: "silero",

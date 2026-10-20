@@ -28,9 +28,20 @@ export type VoiceMachineEvent =
 	| { type: "SUBMIT_REVIEW"; text: string }
 	| { type: "AGENT_STARTED" }
 	| { type: "AGENT_SETTLED"; speak: boolean }
+	/**
+	 * Playback is owned by the stream queue (Voice AI). Enter speaking
+	 * without start_tts — an empty start_tts would SPEAK_DONE immediately
+	 * and tear down the barge monitor while audio is still playing.
+	 */
+	| { type: "ENTER_SPEAKING" }
 	/** Lab / direct utterance (e.g. test-speak) — respects mute. */
 	| { type: "SPEAK_NOW" }
 	| { type: "SPEAK_DONE" }
+	/**
+	 * Human interrupted playback. Cancels TTS audio only.
+	 * Does not abort the orchestrator, tools, or background jobs.
+	 */
+	| { type: "BARGE_COMMIT" }
 	| { type: "STOP" }
 	| { type: "FAIL"; error: string };
 
@@ -115,6 +126,14 @@ export function reduceVoiceState(state: VoiceMachineState, event: VoiceMachineEv
 				return next(state, [{ type: "notify", level: "warning", message: "Voice is off. Use /gentle:voice on first." }]);
 			}
 			if (state.phase === "listening" || state.phase === "transcribing") return unchanged(state);
+			// Prevent accidental capture while the agent turn is open (ghost STT / echo).
+			if (state.phase === "awaiting_agent") {
+				return next(state, [{
+					type: "notify",
+					level: "warning",
+					message: "Agent is still working — wait before a new listen.",
+				}]);
+			}
 			const cancelSpeaking = state.phase === "speaking"
 				? [{ type: "cancel_tts" as const }, { type: "cancel_playback" as const }]
 				: [];
@@ -208,6 +227,17 @@ export function reduceVoiceState(state: VoiceMachineState, event: VoiceMachineEv
 		case "SPEAK_DONE":
 			if (state.phase !== "speaking") return unchanged(state);
 			return next(withPhase(state, "idle"));
+		case "ENTER_SPEAKING":
+			if (state.phase === "speaking") return unchanged(state);
+			if (state.phase !== "awaiting_agent") return unchanged(state);
+			return next(withPhase(state, "speaking"));
+		case "BARGE_COMMIT": {
+			if (state.phase !== "speaking") return unchanged(state);
+			return next(withPhase(state, "listening"), [
+				{ type: "cancel_tts" },
+				{ type: "cancel_playback" },
+			]);
+		}
 		case "STOP":
 			return next(withPhase({ ...state, lastError: undefined }, "idle"), cancelAllActive(state));
 		case "FAIL":

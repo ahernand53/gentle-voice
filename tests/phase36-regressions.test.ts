@@ -229,3 +229,43 @@ test("3.6 regression: ignoreUnhandledAbort keeps Esc→Space path safe", async (
 		process.off("unhandledRejection", onUnhandled);
 	}
 });
+
+test("3.6 regression: finishListen swallows AbortError mid-Whisper (Space crash)", async () => {
+	const stt: ReturnType<typeof createStubSttAdapter> = {
+		...createStubSttAdapter(),
+		async transcribe() {
+			throw new AbortError();
+		},
+	};
+	const session = new VoiceSession({
+		config: {
+			...DEFAULT_VOICE_CONFIG,
+			enabled: true,
+			behavior: {
+				...DEFAULT_VOICE_CONFIG.behavior,
+				mode: "conversation",
+				fluentConversation: true,
+				autoSubmitTranscript: true,
+			},
+		},
+		capture: createStubCaptureAdapter({
+			audio: {
+				bytes: new Uint8Array(3200),
+				sampleRateHz: 16_000,
+				channels: 1,
+				format: "pcm_s16le",
+				captureMeta: meta({ captureId: "abort-space", speechSeen: true }),
+			},
+		}),
+		stt,
+		tts: createStubTtsAdapter(),
+		playback: createStubPlaybackAdapter(),
+	});
+	session.dispatch({ type: "ENABLE" });
+	session.dispatch({ type: "LISTEN" });
+	await session.flush();
+	// Must not throw — previously crashed Pi via uncaughtException on Space.
+	await session.finishListen();
+	await session.flush();
+	assert.ok(isAbortError(new AbortError()));
+});

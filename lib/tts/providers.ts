@@ -12,7 +12,7 @@ export type TtsQualityProfileId = "light" | "balanced" | "natural";
 export interface TtsProviderInfo {
 	readonly id: string;
 	readonly displayName: string;
-	readonly engine: "piper" | "espeak-ng" | "sherpa-onnx" | "kokoro" | "other";
+	readonly engine: "piper" | "espeak-ng" | "sherpa-onnx" | "kokoro" | "vibevoice" | "other";
 	readonly platforms: readonly ("linux" | "win32" | "darwin")[];
 	/** Verified on this machine in-lab; false = research-only claim. */
 	readonly verifiedLocally: boolean;

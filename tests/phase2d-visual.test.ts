@@ -129,6 +129,8 @@ test("VisualMeter: synthesizing has no wave energy; speaking uses WAV; stop clea
 		now: () => t,
 	});
 	try {
+		meter.beginLoadingVoice();
+		assert.equal(meter.speakStage, "loading_voice");
 		meter.beginSynthesizing();
 		assert.equal(meter.speakStage, "synthesizing");
 		assert.ok(meter.wave.levels().every((v) => v < 0.01));
@@ -172,6 +174,13 @@ test("chrome states: ARMING, SPEECH_DETECTED, SYNTHESIZING, SPEAKING, MUTED, ERR
 	assert.equal(
 		resolveChromeActivity(listening, { micReady: true, speechDetected: true }),
 		"SPEECH_DETECTED",
+	);
+	assert.equal(
+		resolveChromeActivity(
+			initialVoiceState({ enabled: true, phase: "speaking" }),
+			{ speakStage: "loading_voice" },
+		),
+		"VOICE_LOADING",
 	);
 	assert.equal(
 		resolveChromeActivity(

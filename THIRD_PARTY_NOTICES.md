@@ -33,6 +33,14 @@ tarball) come from upstream projects. First-run consent must surface these terms
 - Not required for install: without the model/runtime, Gentle Voice keeps energy VAD.
 - Do not vendor BUSL wrappers from other Pi voice packages.
 
+## VibeVoice Realtime 0.5B (optional engine)
+
+- Code: https://github.com/microsoft/VibeVoice — **MIT**, Copyright (c) 2025 Microsoft.
+- This npm package does **not** redistribute the model weights, the voice file, or a Python environment.
+- The model card limits the weights to research use, states the training data is English, and requires keeping the audible disclaimer and watermark. Do not strip them.
+- Spanish output is outside the published training scope. Treat it as experimental.
+- Microsoft recommends disclosing that the speech is AI-generated and does not recommend commercial or real-world use without further testing.
+
 ## Kokoro (optional lab)
 
 - Used only when present under a developer lab install.

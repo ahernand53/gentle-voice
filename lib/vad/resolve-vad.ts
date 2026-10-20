@@ -2,6 +2,7 @@
  * Resolve VAD backend: Silero when available, else energy (fail-closed).
  */
 
+import { join } from "node:path";
 import { createEnergyVad, type EnergyVadOptions } from "./energy-vad.ts";
 import { tryCreateSileroVad, type SileroVadOptions } from "./silero-vad.ts";
 import type { VadBackendId, VadEngine } from "./types.ts";
@@ -28,11 +29,23 @@ function preferenceFromEnv(env: NodeJS.ProcessEnv): VadBackendPreference | undef
 	return undefined;
 }
 
-function modelPathFrom(input: ResolveVadInput): string {
+/**
+ * Model path resolution (no machine-specific hardcodes):
+ * 1. explicit silero.modelPath
+ * 2. GENTLE_VOICE_SILERO_VAD
+ * 3. $GENTLE_VOICE_MODELS/silero/silero_vad.onnx (lab convention)
+ *
+ * Uses the same `env` object as preferenceFromEnv (input.env ?? process.env).
+ * Previously only read input.env — PipeWire capture omits env, so process.env
+ * was ignored and real GS-Lab sessions always fell back with silero_model_path_missing.
+ */
+export function modelPathFrom(input: ResolveVadInput, env: NodeJS.ProcessEnv): string {
 	const fromOpt = input.silero?.modelPath?.trim();
 	if (fromOpt) return fromOpt;
-	const fromEnv = input.env?.GENTLE_VOICE_SILERO_VAD?.trim();
+	const fromEnv = env.GENTLE_VOICE_SILERO_VAD?.trim();
 	if (fromEnv) return fromEnv;
+	const modelsRoot = env.GENTLE_VOICE_MODELS?.trim();
+	if (modelsRoot) return join(modelsRoot, "silero", "silero_vad.onnx");
 	return "";
 }
 
@@ -52,7 +65,7 @@ export async function resolveVad(input: ResolveVadInput = {}): Promise<ResolvedV
 		return energy();
 	}
 
-	const modelPath = modelPathFrom(input);
+	const modelPath = modelPathFrom(input, env);
 	const sileroOpts: SileroVadOptions = {
 		...input.silero,
 		modelPath,

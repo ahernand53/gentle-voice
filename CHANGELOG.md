@@ -2,6 +2,26 @@
 
 All notable changes to Gentle Voice are documented here.
 
+## [0.1.5] — unreleased
+
+Prepared, not published. npm `latest` remains `0.1.4` until the real VibeVoice install is confirmed and publication is approved.
+
+### Added
+
+- VibeVoice Realtime 0.5B as an optional engine, with a consent wizard, private `.venv`, pinned hashes, and `sp-Spk0_woman`.
+- Native PCM playback for VibeVoice when `pw-play` supports float32. `/gentle:voice stream wav` keeps WAV.
+- `/gentle:voice voice-ai`, `barge-in`, `tts`, `stream`, and `vibevoice-setup`.
+- Voice AI narrates the final assistant text through a profile role named `voice-ai`. The role is not a model. The extra call is billed separately. Invalid, failed, or timed-out narration uses a deterministic renderer.
+- Silero VAD with an energy fallback, optional incremental speech-to-text, and a small local correction lexicon.
+- First `Esc` while voice is busy cancels only the voice channel.
+
+### Notes
+
+- Piper stays the engine until a VibeVoice install is accepted and the preference is not Piper.
+- Weights, voices, and the VibeVoice tree are not in the npm tarball.
+- The real Hugging Face download has not been run in this release preparation.
+- Windows, macOS, CPU, and non-NVIDIA GPUs are not a tested VibeVoice path.
+
 ## [0.1.4] — 2026-10-20
 
 ### Fixed

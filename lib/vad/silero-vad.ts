@@ -229,9 +229,16 @@ export async function tryCreateSileroVad(options: SileroVadOptions): Promise<Sil
 
 	try {
 		const modelBytes = await readFile(modelPath);
-		// Use default providers from the installed onnxruntime-node build
-		// (lab GPU build may not expose CPUExecutionProvider by name).
-		const session = await ort.InferenceSession.create(modelBytes);
+		// Prefer CPU so VibeVoice (CUDA) cannot stall VAD / end-of-speech detection.
+		// Fall back to ORT defaults if this build has no CPU EP by name.
+		let session: Awaited<ReturnType<typeof ort.InferenceSession.create>>;
+		try {
+			session = await ort.InferenceSession.create(modelBytes, {
+				executionProviders: ["cpu"],
+			});
+		} catch {
+			session = await ort.InferenceSession.create(modelBytes);
+		}
 		let stateData = new Float32Array(SILERO_STATE_SIZE);
 		const sr = BigInt64Array.from([BigInt(16_000)]);
 

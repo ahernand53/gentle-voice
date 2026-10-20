@@ -52,6 +52,105 @@ function toWavBytes(audio: AudioChunk): Uint8Array {
 	return pcmS16leToWav(audio.bytes, audio.sampleRateHz, audio.channels);
 }
 
+export interface RawPcmStream {
+	write(pcm: Uint8Array): void;
+	/** Close stdin so pw-play drains and exits. */
+	finish(): void;
+	readonly done: Promise<void>;
+	stop(): Promise<void>;
+}
+
+/**
+ * Progressive playback. WAV `play()` stays the default path.
+ * `pw-play --raw --format f32` is the installed PipeWire reader for float32 mono.
+ */
+export function openPipewirePcmStream(options: {
+	signal: AbortSignal;
+	sampleRateHz: number;
+	channels: number;
+	format: "f32" | "s16";
+	pwPlayPath?: string;
+}): RawPcmStream {
+	const bin = options.pwPlayPath ?? "pw-play";
+	const args = [
+		"--raw",
+		`--rate=${options.sampleRateHz}`,
+		`--channels=${options.channels}`,
+		`--format=${options.format}`,
+		"--latency=80ms",
+		"-",
+	];
+	const child = spawn(bin, args, { stdio: ["pipe", "ignore", "pipe"] });
+	let stderr = "";
+	child.stderr?.on("data", (c: Buffer) => {
+		stderr += c.toString("utf8");
+	});
+	let settled = false;
+	let finished = false;
+
+	const stop = async () => {
+		if (settled) return;
+		finished = true;
+		try {
+			child.stdin?.end();
+		} catch {
+			/* already closed */
+		}
+		if (!child.killed) child.kill("SIGINT");
+		await new Promise<void>((resolve) => {
+			child.once("exit", () => resolve());
+			setTimeout(() => {
+				if (!child.killed) child.kill("SIGTERM");
+				resolve();
+			}, 1_500);
+		});
+		settled = true;
+	};
+
+	const detach = onAbort(options.signal, () => {
+		void stop();
+	});
+
+	const done = new Promise<void>((resolve, reject) => {
+		child.once("exit", (code, sig) => {
+			detach();
+			settled = true;
+			if (options.signal.aborted || finished) {
+				resolve();
+				return;
+			}
+			if (code !== 0 && code !== null && !sig) {
+				reject(new Error(`pw-play raw exited ${code}: ${stderr.trim().slice(0, 300)}`));
+				return;
+			}
+			resolve();
+		});
+		child.once("error", (err) => {
+			detach();
+			settled = true;
+			reject(err);
+		});
+	});
+
+	return {
+		write(pcm: Uint8Array) {
+			if (settled || options.signal.aborted || pcm.byteLength === 0) return;
+			child.stdin?.write(pcm);
+		},
+		finish() {
+			if (settled || finished) return;
+			finished = true;
+			try {
+				child.stdin?.end();
+			} catch {
+				/* already closed */
+			}
+		},
+		done,
+		stop,
+	};
+}
+
 export function createPipewirePlaybackAdapter(
 	options: PipewirePlaybackOptions = {},
 ): PlaybackAdapter {

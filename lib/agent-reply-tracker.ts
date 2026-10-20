@@ -12,6 +12,7 @@
 
 import type { AssistantMessageLike } from "./contracts.ts";
 import type { AgentSettleOutcome } from "./agent-settled.ts";
+import { extractAssistantPlainText } from "./final-utterance.ts";
 
 export interface ReplyDiagEvent {
 	readonly at: string;
@@ -59,15 +60,17 @@ export function fingerprintMessage(message: AssistantMessageLike | null): string
 	return `${joined.length}:${h.toString(16)}`;
 }
 
+/** Last assistant that has user-facing text. A trailing tool-only message does not hide it. */
 export function lastAssistantFromMessages(list: unknown): AssistantMessageLike | null {
 	if (!Array.isArray(list)) return null;
+	let toolOnly: AssistantMessageLike | null = null;
 	for (let i = list.length - 1; i >= 0; i--) {
 		const msg = asAssistantMessage(list[i]);
-		if (msg && Array.isArray(msg.content) && msg.content.length > 0) return msg;
-		// Empty content assistant still counts if role matches (tool-only later filtered).
-		if (msg) return msg;
+		if (!msg) continue;
+		if (extractAssistantPlainText(msg)) return msg;
+		if (!toolOnly) toolOnly = msg;
 	}
-	return null;
+	return toolOnly;
 }
 
 /** Read last assistant from Pi sessionManager.getEntries() message entries. */
@@ -77,7 +80,8 @@ export function lastAssistantFromSessionEntries(entries: unknown): AssistantMess
 		const entry = entries[i];
 		if (!isRecord(entry) || entry.type !== "message") continue;
 		const msg = asAssistantMessage(entry.message);
-		if (msg) return msg;
+		if (!msg) continue;
+		if (extractAssistantPlainText(msg)) return msg;
 	}
 	return null;
 }
@@ -124,6 +128,12 @@ export class AgentReplyTracker {
 			this.#log("turn_end_no_assistant", {
 				turnIndex: typeof event.turnIndex === "number" ? event.turnIndex : undefined,
 				outcome: typeof event.outcome === "string" ? event.outcome : undefined,
+			});
+			return;
+		}
+		if (!extractAssistantPlainText(msg) && this.#cached && extractAssistantPlainText(this.#cached)) {
+			this.#log("turn_end_kept_prior_text", {
+				turnIndex: typeof event.turnIndex === "number" ? event.turnIndex : undefined,
 			});
 			return;
 		}

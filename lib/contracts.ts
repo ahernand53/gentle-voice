@@ -33,6 +33,11 @@ export type VoiceCommandName =
 	| "edit"
 	| "converse"
 	| "purge"
+	| "stream"
+	| "voice-ai"
+	| "barge-in"
+	| "tts"
+	| "vibevoice-setup"
 	| "";
 
 /** Platform identifiers for capture/playback adapters. */
@@ -90,7 +95,11 @@ export interface CaptureAdapter {
 		onPcmChunk?: (pcm: Uint8Array, meta: { channels: number; sampleRateHz: number }) => void;
 		/** Delay before VAD may end (echo hold); PCM still buffered. */
 		vadArmDelayMs?: number;
+		/** While true, VAD must not close the capture (barge monitor before commit). */
+		holdVadEnd?: () => boolean;
 		onFirstPcm?: (info: { captureId: string; atMs: number }) => void;
+		/** First time VAD/energy marks speech in this capture (incremental STT arm). */
+		onSpeechSeen?: (info: { captureId: string; atMs: number }) => void;
 	}): Promise<CaptureSession>;
 }
 
@@ -113,7 +122,17 @@ export interface TtsResult {
 export interface TtsAdapter {
 	readonly id: string;
 	availability(): Promise<AdapterAvailability>;
-	synthesize(text: string, options: { signal: AbortSignal; voiceId?: string }): Promise<TtsResult>;
+	synthesize(text: string, options: {
+		signal: AbortSignal;
+		voiceId?: string;
+		/** Lab-only. Float32 mono frames while VibeVoice is still generating. */
+		onPcm?: (frame: {
+			seq: number;
+			pcm: Uint8Array;
+			sampleRateHz: number;
+			channels: number;
+		}) => void | Promise<void>;
+	}): Promise<TtsResult>;
 }
 
 export interface PlaybackHandle {
@@ -188,7 +207,7 @@ export interface VoiceHostContext {
 		getEditorText?(): string;
 		pasteToEditor?(text: string): void;
 		/** Raw terminal bytes (Esc detection). Returns unsubscribe. */
-		onTerminalInput?(handler: (data: string) => boolean | void): () => void;
+		onTerminalInput?(handler: (data: string) => { consume?: boolean; data?: string } | boolean | void): () => void;
 	};
 	isIdle(): boolean;
 	/** Abort the current agent generation (Pi ExtensionContext.abort). */
@@ -196,7 +215,14 @@ export interface VoiceHostContext {
 	/** Pi 1.2 ReadonlySessionManager (duck-typed) — used to recover final assistant text. */
 	sessionManager?: {
 		getEntries?: () => readonly unknown[];
+		getSessionId?: () => string | undefined;
+		sessionId?: string;
 	};
+	/** Pi ModelRegistry — Voice AI auxiliary inference (complete / streamSimple). */
+	modelRegistry?: unknown;
+	/** Active orchestrator model (never swapped by Voice AI). */
+	model?: { provider?: string; id?: string };
+	thinkingLevel?: string;
 }
 
 export type VoiceHostCommandContext = VoiceHostContext;

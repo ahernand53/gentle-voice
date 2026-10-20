@@ -58,6 +58,7 @@ export interface PipewireCaptureOptions {
 	 * PCM is still buffered (pre-roll for speech that starts during the hold).
 	 */
 	readonly vadArmDelayMs?: number;
+	readonly holdVadEnd?: () => boolean;
 	/** Fired once when the first PCM chunk arrives (mic really producing). */
 	readonly onFirstPcm?: (info: { captureId: string; atMs: number }) => void;
 	/** Lab/metrics: which backend was selected for the last start(). */
@@ -90,7 +91,14 @@ export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {
 			}
 			return { status: "unavailable", reason: "pw_record_missing" };
 		},
-		async start({ signal, onPcmChunk, vadArmDelayMs: armFromStart, onFirstPcm }): Promise<CaptureSession> {
+		async start({
+			signal,
+			onPcmChunk,
+			vadArmDelayMs: armFromStart,
+			onFirstPcm,
+			onSpeechSeen,
+			holdVadEnd,
+		}): Promise<CaptureSession> {
 			throwIfAborted(signal);
 			const avail = await this.availability();
 			if (avail.status === "unavailable") {
@@ -108,8 +116,10 @@ export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {
 			const startedAt = Date.now();
 			const vadArmDelayMs = Math.max(0, armFromStart ?? options.vadArmDelayMs ?? 0);
 			const firstPcmHook = onFirstPcm ?? options.onFirstPcm;
+			const speechSeenHook = onSpeechSeen;
 			let firstPcmAt: number | undefined;
 			let speechSeenAt: number | undefined;
+			let speechSeenNotified = false;
 			const maxListenMs = (typeof options.vad === "object" && options.vad?.maxListenMs)
 				|| 60_000;
 			const maxBytes = sampleRateHz * channels * 2 * (maxListenMs / 1000 + 2);
@@ -139,9 +149,13 @@ export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {
 					? resolveEnergyVadOnly(energyOpts)
 					: await resolveVad({
 						preference: options.vadBackend ?? "auto",
+						// Same process env the launcher exported (GENTLE_VOICE_SILERO_VAD / MODELS).
+						env: process.env,
 						energy: energyOpts,
 						silero: {
-							modelPath: options.sileroModelPath,
+							...(options.sileroModelPath?.trim()
+								? { modelPath: options.sileroModelPath.trim() }
+								: {}),
 							sampleRateHz,
 							maxListenMs,
 							maxIntraPauseMs: energyOpts.maxIntraPauseMs,
@@ -238,8 +252,16 @@ export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {
 				const ended = vad?.pushPcmS16le(c) ?? false;
 				if (!beforeSpeech && vad?.state.speechSeen && speechSeenAt === undefined) {
 					speechSeenAt = now;
+					if (!speechSeenNotified) {
+						speechSeenNotified = true;
+						try {
+							speechSeenHook?.({ captureId: id, atMs: now });
+						} catch {
+							/* diag only */
+						}
+					}
 				}
-				if (ended) endCapture("vad");
+				if (ended && !holdVadEnd?.()) endCapture("vad");
 			});
 
 			child.once("error", (err) => {
