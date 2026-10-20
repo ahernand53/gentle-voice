@@ -11,6 +11,7 @@ Phase 3.5 — production conversation UX, honest status, safe uninstall/cleanup.
 - Product Ctrl+Alt+Space / Ctrl+Alt+E registration without `GENTLE_VOICE_LAB*` (opt-out: `GENTLE_VOICE_DISABLE_SHORTCUTS=1`).
 - `/gentle:voice converse on|off` as a product command (hands-free session).
 - `/gentle:voice purge` + `gentle-voice-cleanup` CLI for optional private-data removal with explicit confirm token.
+- `--keep-models` on purge / `gentle-voice-cleanup` — preserve private `models/` (STT models + TTS voices) while removing binaries, config, cache, and tmp.
 - Docs: `docs/phase35-uninstall-pnpm.md`, `docs/phase35-voice-refs.md`.
 
 ### Changed
@@ -23,6 +24,7 @@ Phase 3.5 — production conversation UX, honest status, safe uninstall/cleanup.
 
 - Cleanup deletes Pi XDG **config** + **cache** gentle-voice roots, not only `share/` (complete remove).
 - `gentle-voice-repair-settings` repairs partial unregister (`settings` vs npm) without defaulting to `~/.pi`.
+- Windows CI path asserts in cleanup tests (normalize `\` vs `/`).
 
 ### Notes
 

@@ -28,6 +28,11 @@ import {
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
+/** Normalize path separators so Windows CI matches posix-style asserts. */
+function posixPaths(paths: readonly string[]): string {
+	return paths.map((p) => p.replace(/\\/g, "/")).join("\n");
+}
+
 test("3.5b Pi standalone plan includes XDG data+config+cache gentle-voice roots", () => {
 	const home = "/tmp/gv-pi-xdg-home";
 	const r = resolveGentleVoiceStorage({
@@ -42,7 +47,8 @@ test("3.5b Pi standalone plan includes XDG data+config+cache gentle-voice roots"
 	assert.equal(r.hostKind, "pi-standalone");
 	const plan = planGentleVoiceDataCleanup(r);
 	assert.equal(plan.allowed, true);
-	const blob = plan.directories.join("\n");
+	assert.equal(plan.keepModels, false);
+	const blob = posixPaths(plan.directories);
 	assert.match(blob, /\.local\/share\/gentle-voice/);
 	assert.match(blob, /\.config\/gentle-voice/);
 	assert.match(blob, /\.cache\/gentle-voice/);
@@ -63,9 +69,14 @@ test("3.5b GS isolated plan nests under prefix/gentle-voice only", () => {
 	assert.equal(r.hostKind, "gs-isolated");
 	const plan = planGentleVoiceDataCleanup(r);
 	assert.equal(plan.allowed, true);
-	assert.ok(plan.directories.every((d) => d.includes(".gentle-shell/gentle-voice") || d.includes("gentle-voice")));
-	assert.ok(!plan.directories.some((d) => d.includes(".gentle-shell/versions")));
-	assert.ok(!plan.directories.some((d) => d.includes("voxtype")));
+	assert.ok(
+		plan.directories.every((d) => {
+			const n = d.replace(/\\/g, "/");
+			return n.includes(".gentle-shell/gentle-voice") || n.includes("gentle-voice");
+		}),
+	);
+	assert.ok(!plan.directories.some((d) => d.replace(/\\/g, "/").includes(".gentle-shell/versions")));
+	assert.ok(!plan.directories.some((d) => /voxtype/i.test(d)));
 });
 
 test("3.5b execute deletes Pi XDG config+cache siblings (not only dataDir)", async () => {
@@ -208,6 +219,58 @@ test("3.5b partial uninstall detection + settings repair (temp copy only)", asyn
 	const applied = applyRemoveGentleVoiceFromSettings(after);
 	assert.equal(applied.plan.changed, false);
 });
+
+test("3.5b keep-models preserves modelsDir and omits storage root", async () => {
+	const base = await mkdtemp(join(tmpdir(), "gv-keep-models-"));
+	const data = join(base, ".local", "share", "gentle-voice");
+	const models = join(data, "models");
+	const bin = join(data, "bin");
+	const config = join(base, ".config", "gentle-voice");
+	const cache = join(base, ".cache", "gentle-voice");
+	await mkdir(join(models, "whisper"), { recursive: true });
+	await mkdir(bin, { recursive: true });
+	await mkdir(config, { recursive: true });
+	await mkdir(join(cache, "tmp"), { recursive: true });
+	await writeFile(join(models, "whisper", "ggml.bin"), "model");
+	await writeFile(join(bin, "whisper-cli"), "bin");
+	await writeFile(join(config, "config.json"), "{}");
+
+	const resolution = resolveGentleVoiceStorage({
+		env: {
+			HOME: base,
+			XDG_DATA_HOME: join(base, ".local", "share"),
+			XDG_CONFIG_HOME: join(base, ".config"),
+			XDG_CACHE_HOME: join(base, ".cache"),
+		},
+		platform: "linux",
+	});
+	const plan = planGentleVoiceDataCleanup(resolution, { keepModels: true });
+	assert.equal(plan.allowed, true);
+	assert.equal(plan.keepModels, true);
+	const blob = posixPaths(plan.directories);
+	assert.ok(!plan.directories.some((d) => pathsEqualish(d, models)));
+	assert.ok(!plan.directories.some((d) => pathsEqualish(d, data)));
+	assert.match(blob, /bin/);
+	assert.match(blob, /\.config\/gentle-voice|\.config\\gentle-voice|config/);
+
+	const result = await executeGentleVoiceDataCleanup({
+		confirm: CLEANUP_CONFIRM_TOKEN,
+		resolution,
+		keepModels: true,
+	});
+	assert.equal(result.ok, true);
+	await access(join(models, "whisper", "ggml.bin"), constants.R_OK);
+	try {
+		await access(join(bin, "whisper-cli"), constants.R_OK);
+		assert.fail("bin should be gone");
+	} catch {
+		/* expected */
+	}
+});
+
+function pathsEqualish(a: string, b: string): boolean {
+	return a.replace(/\\/g, "/").toLowerCase() === b.replace(/\\/g, "/").toLowerCase();
+}
 
 test("3.5b refuse symlink even when under gentle-voice", async () => {
 	const base = await mkdtemp(join(tmpdir(), "gv-sym-"));

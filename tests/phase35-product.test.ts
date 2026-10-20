@@ -142,11 +142,13 @@ test("3.5 help is product-facing (no phase 2C)", () => {
 	assert.match(text, /converse on/);
 	assert.match(text, /Ctrl\+Alt\+Space/);
 	assert.match(text, /purge/);
+	assert.match(text, /keep-models/);
 });
 
 test("3.5 parse converse and purge", () => {
 	assert.equal(parseVoiceArgs("converse on").command, "converse");
 	assert.equal(parseVoiceArgs("purge").command, "purge");
+	assert.equal(parseVoiceArgs("purge --keep-models").command, "purge");
 });
 
 test("3.5 cleanup refuses wrong token and deletes only under storage root", async () => {

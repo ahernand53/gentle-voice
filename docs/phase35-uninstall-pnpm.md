@@ -6,7 +6,7 @@
 
 `pi remove` → gate **passthrough** → `pnpm` rebuild/uninstall of `~/.pi/agent/npm`.
 
-`pnpm-workspace.yaml` currently has:
+`pnpm-workspace.yaml` **previously** had an invalid placeholder (repaired locally to `false`):
 
 ```yaml
 allowBuilds:
@@ -96,3 +96,12 @@ The CLI **refuses** to default to `~/.pi`; `--settings` is mandatory. `--write` 
 - **GS isolated/bundled:** `<prefix>/gentle-voice/…`
 
 Deletes only planned paths that contain a `gentle-voice` segment; refuses symlinks, Voxtype/WD-Black, GS `versions`/`runtime`. Requires `--confirm DELETE_GENTLE_VOICE_DATA`.
+
+Preserve models for reinstall:
+
+```bash
+npx --package gentle-voice gentle-voice-cleanup --keep-models
+npx --package gentle-voice gentle-voice-cleanup --keep-models --confirm DELETE_GENTLE_VOICE_DATA
+```
+
+Or while the extension is still installed: `/gentle:voice purge --keep-models` then confirm.

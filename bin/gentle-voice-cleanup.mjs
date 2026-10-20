@@ -23,8 +23,10 @@ function usage() {
 	console.log(`gentle-voice-cleanup — optional private data removal
 
 Usage:
-  gentle-voice-cleanup              Show cleanup plan (dry-run)
+  gentle-voice-cleanup                         Show cleanup plan (dry-run)
+  gentle-voice-cleanup --keep-models           Dry-run; preserve models/voices
   gentle-voice-cleanup --confirm ${CLEANUP_CONFIRM_TOKEN}
+  gentle-voice-cleanup --keep-models --confirm ${CLEANUP_CONFIRM_TOKEN}
 
 Environment: same GENTLE_VOICE_* / GENTLE_SHELL_* as the extension.
 Never deletes Voxtype, WD-Black, other Pi packages, or GS versions/runtime.
@@ -37,6 +39,8 @@ if (args.includes("-h") || args.includes("--help")) {
 	process.exit(0);
 }
 
+const keepModels = args.includes("--keep-models");
+
 const confirmIdx = args.findIndex((a) => a === "--confirm" || a.startsWith("--confirm="));
 let confirm = "";
 if (confirmIdx >= 0) {
@@ -45,7 +49,7 @@ if (confirmIdx >= 0) {
 }
 
 const resolution = resolveGentleVoiceStorage();
-const plan = planGentleVoiceDataCleanup(resolution);
+const plan = planGentleVoiceDataCleanup(resolution, { keepModels });
 console.log(formatCleanupPlan(plan));
 
 if (!confirm) {
@@ -53,7 +57,7 @@ if (!confirm) {
 	process.exit(0);
 }
 
-const result = await executeGentleVoiceDataCleanup({ confirm, resolution });
+const result = await executeGentleVoiceDataCleanup({ confirm, resolution, keepModels });
 for (const d of result.deleted) console.log(`deleted ${d}`);
 for (const s of result.skipped) console.log(`skipped ${s}`);
 for (const e of result.errors) console.error(`error ${e}`);

@@ -67,15 +67,19 @@ export function isAuthorizedCleanupTarget(
 
 /**
  * Delete only authorized plan paths.
- * Requires exact confirm token. Supports dryRun.
+ * Requires exact confirm token. Supports dryRun and keepModels.
  */
 export async function executeGentleVoiceDataCleanup(options: {
 	readonly confirm: string;
 	readonly resolution?: GentleVoiceStorageResolution;
 	readonly dryRun?: boolean;
+	/** Preserve modelsDir (STT models + TTS voices) for a later reinstall. */
+	readonly keepModels?: boolean;
 }): Promise<CleanupExecutionResult> {
 	const resolution = options.resolution ?? resolveGentleVoiceStorage();
-	const plan = planGentleVoiceDataCleanup(resolution);
+	const plan = planGentleVoiceDataCleanup(resolution, {
+		keepModels: options.keepModels === true,
+	});
 	const deleted: string[] = [];
 	const skipped: string[] = [];
 	const errors: string[] = [];
@@ -143,6 +147,7 @@ export function formatCleanupPlan(plan: DataCleanupPlan): string {
 		`cleanup.allowed=${plan.allowed}`,
 		`cleanup.hostKind=${plan.hostKind}`,
 		`cleanup.storageRoot=${plan.storageRoot}`,
+		`cleanup.keepModels=${plan.keepModels}`,
 		`cleanup.note=${plan.note}`,
 		...plan.reasonsDenied.map((r) => `cleanup.denied=${r}`),
 		"cleanup.paths:",

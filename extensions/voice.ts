@@ -834,8 +834,9 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 				}
 				case "purge": {
 					const storage = resolveGentleVoiceStorage();
-					const plan = planGentleVoiceDataCleanup(storage);
 					const rest = parsed.rest.trim();
+					const keepModels = /(?:^|\s)--keep-models(?:\s|$)/.test(rest);
+					const plan = planGentleVoiceDataCleanup(storage, { keepModels });
 					const confirmMatch = rest.match(/--confirm(?:=|\s+)(\S+)/);
 					const confirm = confirmMatch?.[1] ?? "";
 					if (!confirm) {
@@ -846,17 +847,23 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 								"This does NOT uninstall the npm package.",
 								"To delete private data after reviewing paths:",
 								`  /gentle:voice purge --confirm ${CLEANUP_CONFIRM_TOKEN}`,
-								"Or after package removal: `npx gentle-voice-cleanup --confirm …`",
+								`  /gentle:voice purge --keep-models --confirm ${CLEANUP_CONFIRM_TOKEN}`,
+								"Or after package removal: `npx --package gentle-voice gentle-voice-cleanup [--keep-models] --confirm …`",
 								"Never deletes Voxtype / WD-Black / other Pi packages / GS versions.",
 							].join("\n"),
 							"info",
 						);
 						break;
 					}
-					const result = await executeGentleVoiceDataCleanup({ confirm, resolution: storage });
+					const result = await executeGentleVoiceDataCleanup({
+						confirm,
+						resolution: storage,
+						keepModels,
+					});
 					ctx.ui.notify(
 						[
 							`purge.ok=${result.ok}`,
+							`purge.keepModels=${keepModels}`,
 							...result.deleted.map((d) => `deleted=${d}`),
 							...result.skipped.map((d) => `skipped=${d}`),
 							...result.errors.map((e) => `error=${e}`),

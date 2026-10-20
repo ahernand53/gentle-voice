@@ -106,6 +106,7 @@ export function voiceHelpText(options?: { includeLab?: boolean }): string {
 		"  /gentle:voice setup        First-run readiness (consent-gated downloads)",
 		"  /gentle:voice storage      Host isolation + private data dirs (cleanup dry-run)",
 		"  /gentle:voice purge        Show data-cleanup plan (requires confirm token to delete)",
+		"  /gentle:voice purge --keep-models   Same plan but preserve models/voices",
 	];
 	if (options?.includeLab || isGentleVoiceLabMode()) {
 		lines.push(
@@ -127,6 +128,7 @@ export function voiceHelpText(options?: { includeLab?: boolean }): string {
 		"Mic stays off until you start a session (shortcut or converse on / listen).",
 		"Package remove: `pi remove npm:gentle-voice` (keeps private data).",
 		"Data remove: `/gentle:voice purge` then confirm, or `gentle-voice-cleanup` CLI.",
+		"Keep models for reinstall: add `--keep-models` to purge / cleanup.",
 		"Does not narrate tools, subagents, or thinking.",
 	);
 	return lines.join("\n");
