@@ -2,6 +2,34 @@
 
 All notable changes to Gentle Voice are documented here.
 
+## [0.1.1] — 2026-10-19
+
+Gentle Shell isolation + lab-path hard gate for published product behaviour.
+
+### Added
+
+- `resolveGentleVoiceStorage()` — env-only host detection (Pi standalone, GS bundled, GS isolated, `--link`, custom `--home`, explicit overrides).
+- Storage under `<GENTLE_SHELL_PREFIX>/gentle-voice/` (or `~/.gentle-shell/gentle-voice/`) with `bin/`, `models/`, `config/`, `cache/`, `tmp/`, `logs/`.
+- `/gentle:voice storage` — diagnostics + optional data-cleanup dry-run (never deletes automatically).
+- `isGentleVoiceLabPathsAllowed()` + `lib/runtime/lab-paths.ts` — lab paths only from env (no hard-coded homes in the tarball).
+- Isolation + lab-gate regression tests (temporary HOME/prefix sentinels; no real Pi/GS mutation).
+- Design doc: `docs/kokoro-portable.md` (ONNX Runtime path; no downloads in this release).
+
+### Changed
+
+- Inside GS isolated/bundled sessions, first-run downloads no longer use ambient `~/.local/share/gentle-voice` / XDG paths (unless `GENTLE_VOICE_*` overrides).
+- `--link` keeps the portable Pi layout (does not treat GS prefix alone as isolation).
+- `labKokoroPresent()` returns false without probing disk when lab is OFF.
+- Filesystem engine probe no longer scans third-party/lab trees unless lab env is set.
+- Product TTS default remains **Piper**; Kokoro stays lab-only (env-configured) until a portable ONNX ship.
+- `lib/lab/*` and machine-specific docs excluded from the npm tarball.
+
+### Notes
+
+- Does **not** publish over `0.1.0`; patch `0.1.1` only after PR merge + explicit publish authorization.
+- Windows / macOS remain unsupported pending real hardware smoke.
+- Existing external lab models are **not** deleted or modified.
+
 ## [0.1.0] — 2026-10-19
 
 First stable npm release (`latest`). Linux first-run path is experimental but installable; Windows and macOS are **not** claimed as supported.

@@ -27,6 +27,7 @@ export type VoiceCommandName =
 	| "status"
 	| "config"
 	| "setup"
+	| "storage"
 	| "send"
 	| "draft"
 	| "edit"

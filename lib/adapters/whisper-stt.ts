@@ -251,10 +251,11 @@ export function createWhisperSttAdapter(options: WhisperSttAdapterOptions): Whis
 	return adapter;
 }
 
-/** Read-only Voxtype model path (never modify/move/copy). */
-export const LAB_VOXTYPE_GGML_SMALL =
-	"/home/erickfm/.local/share/voxtype/models/ggml-small.bin";
-
-export const LAB_WHISPER_INSTALL_ROOT = "/home/erickfm/WD-Black/gentle-voice";
-export const LAB_WHISPER_BIN_DIR = `${LAB_WHISPER_INSTALL_ROOT}/bin`;
-export const LAB_WHISPER_CLI_CANDIDATE = `${LAB_WHISPER_BIN_DIR}/whisper-cli`;
+/**
+ * Lab whisper/voxtype paths — resolved from env only.
+ * @see resolveLabWhisperPaths in runtime/lab-paths.ts
+ */
+export {
+	resolveLabWhisperPaths,
+	labRoot as resolveLabWhisperInstallRoot,
+} from "../runtime/lab-paths.ts";

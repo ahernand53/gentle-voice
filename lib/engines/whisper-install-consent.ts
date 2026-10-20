@@ -3,7 +3,7 @@
  * Phase 1C: never downloads or extracts — presents requirements only.
  */
 
-import { LAB_WHISPER_BIN_DIR, LAB_WHISPER_INSTALL_ROOT } from "../adapters/whisper-stt.ts";
+import { resolveLabWhisperPaths } from "../runtime/lab-paths.ts";
 
 export type WhisperInstallArch = "x86_64" | "aarch64" | "win-x64" | "darwin-arm64" | "darwin-x64";
 
@@ -89,22 +89,26 @@ export function buildWhisperInstallConsent(options?: {
 				? WHISPER_WIN_X64_B5454
 				: WHISPER_UBUNTU_X64_B5454;
 
+	const lab = resolveLabWhisperPaths();
+	const installRoot = lab?.installRoot ?? "$GENTLE_VOICE_LAB_ROOT";
+	const binDir = lab?.binDir ?? "$GENTLE_VOICE_LAB_ROOT/bin";
 	const reusePath =
-		options?.reuseModelPath ??
-		"/home/erickfm/.local/share/voxtype/models/ggml-small.bin";
+		options?.reuseModelPath
+		?? lab?.model
+		?? "$GENTLE_VOICE_WHISPER_MODEL or $GENTLE_VOICE_VOXTYPE_MODEL";
 
 	return {
 		method: "official_prebuilt_tarball",
 		rejectedGlobalMethods: [
 			"pacman -S whisper-cpp (system-wide /usr)",
 			"paru/yay AUR global install",
-			"modifying /usr/lib/voxtype or voxtype internals",
-			"copying/moving Voxtype ggml-small.bin into WD-Black",
+			"modifying system STT package internals",
+			"copying/moving third-party ggml models into the lab root",
 		],
 		candidate,
 		finalLocation: {
-			root: LAB_WHISPER_INSTALL_ROOT,
-			binDir: LAB_WHISPER_BIN_DIR,
+			root: installRoot,
+			binDir,
 			expectedCliNames: ["whisper-cli", "main"],
 		},
 		reuseModel: {
@@ -125,15 +129,15 @@ export function buildWhisperInstallConsent(options?: {
 				`sha256sum -c <<<'${candidate.sha256}  ${candidate.assetName}'`,
 		},
 		postInstallVerify: [
-			`${LAB_WHISPER_BIN_DIR}/whisper-cli --help`,
-			`file ${LAB_WHISPER_BIN_DIR}/whisper-cli`,
-			`# transcribe smoke (later phase): whisper-cli -m <voxtype ggml> -f sample.wav -nt`,
+			`${binDir}/whisper-cli --help`,
+			`file ${binDir}/whisper-cli`,
+			`# transcribe smoke (later phase): whisper-cli -m <ggml model> -f sample.wav -nt`,
 		],
 		authorized: false,
 		summary:
 			`Download ${candidate.assetName} (${candidate.releaseTag}, ${candidate.sizeBytes} bytes) ` +
-			`into ${LAB_WHISPER_INSTALL_ROOT}/tmp, verify sha256 ${candidate.sha256}, ` +
-			`extract CLI only into ${LAB_WHISPER_BIN_DIR}. Reuse Voxtype model by path. ` +
+			`into ${installRoot}/tmp, verify sha256 ${candidate.sha256}, ` +
+			`extract CLI only into ${binDir}. Reuse an existing ggml model by path (env). ` +
 			`NOT authorized to execute yet.`,
 	};
 }

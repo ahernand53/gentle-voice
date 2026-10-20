@@ -18,12 +18,9 @@ import {
 } from "../lib/lab/tui-validation.ts";
 import {
 	createPiperTtsAdapter,
-	LAB_PIPER_DEFAULTS,
 } from "../lib/adapters/piper-tts.ts";
 import {
 	createWhisperSttAdapter,
-	LAB_VOXTYPE_GGML_SMALL,
-	LAB_WHISPER_CLI_CANDIDATE,
 	readGgmlMagic,
 } from "../lib/adapters/whisper-stt.ts";
 import {
@@ -44,7 +41,14 @@ import { VOICE_COMMAND } from "../lib/commands.ts";
 import { createFakeProcess, CancellationBag, AbortError } from "../lib/process-cancel.ts";
 import { ADAPTER_READY_ENGINES } from "../lib/engines/probe-fs.ts";
 import { resolveVoiceAdapters } from "../lib/adapters/platform.ts";
-import { appendLabLog, skipWithoutLab } from "./lab-env.ts";
+import {
+	appendLabLog,
+	skipWithoutLab,
+	applyDeveloperLabEnv,
+	LAB_PIPER_DEFAULTS,
+	LAB_VOXTYPE_GGML_SMALL,
+	LAB_WHISPER_CLI_CANDIDATE,
+} from "./lab-env.ts";
 
 async function labLog(line: string): Promise<void> {
 	await appendLabLog("phase1c-access.log", line);
@@ -166,6 +170,7 @@ test("real: Voxtype ggml-small magic compatible; whisper-cli ready under WD-Blac
 });
 
 test("consent: whisper.cpp install requirements exact (not executed)", { skip: skipWithoutLab }, async () => {
+	applyDeveloperLabEnv();
 	const consent = buildWhisperInstallConsent({ arch: "x86_64" });
 	assert.equal(consent.authorized, false);
 	assert.equal(consent.candidate.assetName, WHISPER_UBUNTU_X64_B5454.assetName);
@@ -175,7 +180,7 @@ test("consent: whisper.cpp install requirements exact (not executed)", { skip: s
 	assert.equal(consent.reuseModel.action, "reference_only_no_copy");
 	const text = formatWhisperInstallConsent(consent);
 	assert.match(text, /NOT AUTHORIZED/);
-	assert.match(text, /WD-Black\/gentle-voice/);
+	assert.match(text, /GENTLE_VOICE_LAB_ROOT|gentle-voice/);
 
 	await appendLabLog("phase1c-whisper-consent.txt", text);
 	await labLog("whisper-consent: written; install not executed");

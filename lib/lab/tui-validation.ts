@@ -113,19 +113,19 @@ export const TUI_HUMAN_INSTRUCTIONS = `
 ## Prep (lab only)
 
 \`\`\`bash
-cd /home/erickfm/D-SSD/personal/gs-lab
+cd "$GENTLE_VOICE_LAB_ROOT"   # your isolated lab tree
 export GENTLE_SHELL_NO_AUTO_SETUP=1
 export GENTLE_SHELL_CONFIG="$PWD/launcher-config.json"
 export PI_CODING_AGENT_DIR="$PWD/agent"
 export GENTLE_VOICE_HOME="$PWD/voice-home"
-export GENTLE_VOICE_MODELS="/home/erickfm/WD-Black/gentle-voice/models"
-export GENTLE_VOICE_CACHE="/home/erickfm/WD-Black/gentle-voice/cache"
+export GENTLE_VOICE_MODELS="$GENTLE_VOICE_LAB_ROOT/models"
+export GENTLE_VOICE_CACHE="$GENTLE_VOICE_LAB_ROOT/cache"
 export GENTLE_VOICE_LAB=1
 
 # Experimental GS package + lab home — do NOT use --link / default home
 gentle-shell --home "$PWD/agent" \\
-  --package-root /home/erickfm/D-SSD/personal/projects/gentle-shell \\
-  -e /home/erickfm/D-SSD/personal/projects/gentle-voice/extensions/voice.ts
+  --package-root "$GENTLE_VOICE_LAB_GS" \\
+  -e "$GENTLE_VOICE_LAB_EXTENSION"
 \`\`\`
 
 Do **not** send any prompt that would call an LLM. Use slash commands only.

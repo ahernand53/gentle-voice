@@ -13,9 +13,12 @@ import {
 import {
 	createKokoroTtsAdapter,
 	labKokoroPresent,
+} from "../lib/adapters/kokoro-tts.ts";
+import {
+	applyDeveloperLabEnv,
 	LAB_KOKORO_MODEL,
 	LAB_KOKORO_VOICES,
-} from "../lib/adapters/kokoro-tts.ts";
+} from "./lab-env.ts";
 import { createStubTtsAdapter } from "../lib/adapters/stubs.ts";
 import { buildFinalUtterance } from "../lib/final-utterance.ts";
 import { PREFERRED_SHORTCUT } from "../lib/engines/contracts.ts";
@@ -49,12 +52,19 @@ test("2C.3: regression — 2+2 primary in spoken+normalized text", () => {
 });
 
 test("2C.3: lab Kokoro artifacts present (hardware install)", { skip: skipWithoutLab }, async () => {
-	assert.equal(labKokoroPresent(), true);
-	await access(LAB_KOKORO_MODEL, constants.R_OK);
-	await access(LAB_KOKORO_VOICES, constants.R_OK);
-	const adapter = createKokoroTtsAdapter({ dryRun: true });
-	const avail = await adapter.availability();
-	assert.equal(avail.status, "ready");
+	const prevLab = process.env.GENTLE_VOICE_LAB;
+	applyDeveloperLabEnv();
+	try {
+		assert.equal(labKokoroPresent(), true);
+		await access(LAB_KOKORO_MODEL, constants.R_OK);
+		await access(LAB_KOKORO_VOICES, constants.R_OK);
+		const adapter = createKokoroTtsAdapter({ dryRun: true });
+		const avail = await adapter.availability();
+		assert.equal(avail.status, "ready");
+	} finally {
+		if (prevLab === undefined) delete process.env.GENTLE_VOICE_LAB;
+		else process.env.GENTLE_VOICE_LAB = prevLab;
+	}
 });
 
 test("2C.3: A/B listInstalled only ready adapters", async () => {

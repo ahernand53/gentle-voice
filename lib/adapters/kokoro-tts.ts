@@ -10,15 +10,10 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AdapterAvailability, AudioChunk, TtsAdapter, TtsResult } from "../contracts.ts";
 import { throwIfAborted } from "../process-cancel.ts";
+import { isGentleVoiceLabPathsAllowed } from "../runtime/lab-gate.ts";
+import { resolveLabKokoroPaths } from "../runtime/lab-paths.ts";
 import { runCaptured } from "./node-process.ts";
 import { isWavBuffer } from "./wav.ts";
-
-export const LAB_KOKORO_ROOT = "/home/erickfm/WD-Black/gentle-voice";
-export const LAB_KOKORO_PYTHON = `${LAB_KOKORO_ROOT}/venv/bin/python`;
-export const LAB_KOKORO_SCRIPT = `${LAB_KOKORO_ROOT}/bin/kokoro-synth.py`;
-export const LAB_KOKORO_MODEL = `${LAB_KOKORO_ROOT}/models/kokoro/onnx/model_quantized.onnx`;
-export const LAB_KOKORO_VOICES = `${LAB_KOKORO_ROOT}/models/kokoro/voices/ef_dora_only.npz`;
-export const LAB_KOKORO_VOCAB = `${LAB_KOKORO_ROOT}/models/kokoro/vocab-config.json`;
 
 export interface KokoroMetrics {
 	readonly synthesizeMs: number;
@@ -67,11 +62,12 @@ async function isFile(path: string): Promise<boolean> {
 }
 
 export function createKokoroTtsAdapter(options: KokoroTtsAdapterOptions = {}): KokoroTtsAdapter {
-	const pythonPath = options.pythonPath ?? LAB_KOKORO_PYTHON;
-	const scriptPath = options.scriptPath ?? LAB_KOKORO_SCRIPT;
-	const modelPath = options.modelPath ?? LAB_KOKORO_MODEL;
-	const voicesPath = options.voicesPath ?? LAB_KOKORO_VOICES;
-	const vocabPath = options.vocabPath ?? LAB_KOKORO_VOCAB;
+	const fromEnv = resolveLabKokoroPaths();
+	const pythonPath = options.pythonPath ?? fromEnv?.pythonPath ?? "";
+	const scriptPath = options.scriptPath ?? fromEnv?.scriptPath ?? "";
+	const modelPath = options.modelPath ?? fromEnv?.modelPath ?? "";
+	const voicesPath = options.voicesPath ?? fromEnv?.voicesPath ?? "";
+	const vocabPath = options.vocabPath ?? fromEnv?.vocabPath ?? "";
 	const voice = options.voice ?? "ef_dora";
 	const lang = options.lang ?? "es";
 	const dryRun = options.dryRun ?? false;
@@ -87,6 +83,14 @@ export function createKokoroTtsAdapter(options: KokoroTtsAdapterOptions = {}): K
 			return lastMetrics;
 		},
 		async availability(): Promise<AdapterAvailability> {
+			if (!pythonPath || !scriptPath || !modelPath || !voicesPath) {
+				return {
+					status: "unavailable",
+					reason: "kokoro_not_configured",
+					detail:
+						"Kokoro requires explicit paths or lab env (GENTLE_VOICE_LAB=1 + GENTLE_VOICE_LAB_ROOT / GENTLE_VOICE_KOKORO_*).",
+				};
+			}
 			if (!(await isExecutable(pythonPath))) {
 				return { status: "unavailable", reason: "kokoro_python_missing", detail: pythonPath };
 			}
@@ -133,6 +137,12 @@ export function createKokoroTtsAdapter(options: KokoroTtsAdapterOptions = {}): K
 						format: "wav",
 					},
 				};
+			}
+
+			if (!pythonPath || !scriptPath || !modelPath || !voicesPath) {
+				throw new Error(
+					"Kokoro is not configured (lab OFF and no explicit paths). Product TTS default is Piper.",
+				);
 			}
 
 			await mkdir(tmpDir, { recursive: true });
@@ -211,13 +221,20 @@ export function createKokoroTtsAdapter(options: KokoroTtsAdapterOptions = {}): K
 	};
 }
 
-/** True when lab Kokoro install looks complete (sync, for resolve). */
-export function labKokoroPresent(): boolean {
+/**
+ * True when lab Kokoro install looks complete.
+ * Lab OFF → always false (no disk probes).
+ * Lab ON → probes only env-configured paths.
+ */
+export function labKokoroPresent(env: NodeJS.ProcessEnv = process.env): boolean {
+	if (!isGentleVoiceLabPathsAllowed(env)) return false;
+	const paths = resolveLabKokoroPaths(env);
+	if (!paths) return false;
 	try {
-		accessSync(LAB_KOKORO_PYTHON, fsConstants.X_OK);
-		accessSync(LAB_KOKORO_SCRIPT, fsConstants.R_OK);
-		accessSync(LAB_KOKORO_MODEL, fsConstants.R_OK);
-		accessSync(LAB_KOKORO_VOICES, fsConstants.R_OK);
+		accessSync(paths.pythonPath, fsConstants.X_OK);
+		accessSync(paths.scriptPath, fsConstants.R_OK);
+		accessSync(paths.modelPath, fsConstants.R_OK);
+		accessSync(paths.voicesPath, fsConstants.R_OK);
 		return true;
 	} catch {
 		return false;

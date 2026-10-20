@@ -16,8 +16,9 @@ import { artifactsFor, detectArch } from "../lib/runtime/artifacts.ts";
 import { parseVoiceArgs } from "../lib/commands.ts";
 import { verifySha256 } from "../lib/runtime/download.ts";
 
+/** Slash-normalize and drop Windows drive letters so `/tmp/...` asserts work on win32 CI. */
 function posix(p: string): string {
-	return p.replace(/\\/g, "/");
+	return p.replace(/\\/g, "/").replace(/^[A-Za-z]:/, "");
 }
 
 test("3 paths: linux XDG layout under HOME", () => {
@@ -108,8 +109,8 @@ test("3 first-run dirs created under private home only", async () => {
 	const root = await mkdtemp(join(tmpdir(), "gv-layout-"));
 	await mkdir(join(root, "models"), { recursive: true });
 	const layout = resolveRuntimeLayout({ GENTLE_VOICE_HOME: root }, "linux");
-	assert.equal(layout.home, root);
-	assert.ok(layout.modelsDir.startsWith(root));
+	assert.equal(posix(layout.home), posix(root));
+	assert.ok(posix(layout.modelsDir).startsWith(posix(root)));
 });
 
 test("3.2 paths: GENTLE_VOICE_HOME nests cache (ignores external lab CACHE)", () => {
@@ -117,13 +118,13 @@ test("3.2 paths: GENTLE_VOICE_HOME nests cache (ignores external lab CACHE)", ()
 	const layout = resolveRuntimeLayout(
 		{
 			GENTLE_VOICE_HOME: root,
-			GENTLE_VOICE_CACHE: "/home/erickfm/WD-Black/gentle-voice/cache",
+			GENTLE_VOICE_CACHE: "/tmp/external-lab-cache/gentle-voice/cache",
 			HOME: "/tmp/other",
 		},
 		"linux",
 	);
 	assert.equal(posix(layout.cacheDir), `${root}/cache`);
-	assert.ok(!layout.cacheDir.includes("WD-Black"));
+	assert.ok(!posix(layout.cacheDir).includes("external-lab-cache"));
 });
 
 test("3.1 detectArch", () => {

@@ -230,14 +230,10 @@ export function createPiperTtsAdapter(options: PiperTtsAdapterOptions): PiperTts
 }
 
 /**
- * Lab-only reuse paths (read-only references).
- * Not used as public package defaults — wire via env / lab-resolve when LAB/REAL_AUDIO.
+ * @deprecated Prefer resolveLabPiperPaths() from runtime/lab-paths.ts.
+ * Kept as a name for tests that inject paths; empty until lab env is set.
  */
-export const LAB_PIPER_DEFAULTS = Object.freeze({
-	piperPath: "/home/erickfm/.local/bin/piper",
-	voiceModelPath: "/home/erickfm/.local/share/piper-voices/es_AR-daniela-high.onnx",
-	voiceConfigPath: "/home/erickfm/.local/share/piper-voices/es_AR-daniela-high.onnx.json",
-});
+export { resolveLabPiperPaths as resolveLabPiperDefaults } from "../runtime/lab-paths.ts";
 
 /** Fixed phrase for `/gentle:voice test-speak` (lab). */
 export const LAB_TEST_SPEAK_PHRASE =
