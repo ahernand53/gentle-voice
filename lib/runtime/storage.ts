@@ -375,6 +375,15 @@ const FORBIDDEN_CLEANUP_BASENAMES = new Set([
 	"System32",
 ]);
 
+export interface DataCleanupPlanOptions {
+	/**
+	 * Keep STT/TTS models and voices under `modelsDir` for a later reinstall.
+	 * Omits `modelsDir` and the storage root (so a recursive root delete cannot wipe models).
+	 * Still removes binaries (`bin/`, `vendor/`), config, cache, tmp, and logs.
+	 */
+	readonly keepModels?: boolean;
+}
+
 export interface DataCleanupPlan {
 	readonly allowed: boolean;
 	readonly storageRoot: string;
@@ -382,6 +391,7 @@ export interface DataCleanupPlan {
 	readonly directories: readonly string[];
 	readonly reasonsDenied: readonly string[];
 	readonly note: string;
+	readonly keepModels: boolean;
 }
 
 /**
@@ -390,8 +400,11 @@ export interface DataCleanupPlan {
  */
 export function planGentleVoiceDataCleanup(
 	resolution: GentleVoiceStorageResolution = resolveGentleVoiceStorage(),
+	options: DataCleanupPlanOptions = {},
 ): DataCleanupPlan {
+	const keepModels = options.keepModels === true;
 	const root = normalizeStoragePath(resolution.storageRoot);
+	const modelsDir = normalizeStoragePath(resolution.modelsDir);
 	const reasonsDenied: string[] = [];
 	const base = root.split(/[/\\]/).pop() ?? "";
 
@@ -415,27 +428,72 @@ export function planGentleVoiceDataCleanup(
 		}
 	}
 
-	const directories = [
-		root,
-		resolution.binDir,
-		resolution.modelsDir,
-		resolution.configDir,
-		resolution.cacheDir,
-		resolution.tmpDir,
-		resolution.logsDir,
-	];
+	const vendorDir = join(resolution.dataDir, "vendor");
+	const candidates = keepModels
+		? [
+				// Never delete storage root when keeping models (rm -rf would wipe modelsDir).
+				resolution.binDir,
+				vendorDir,
+				resolution.configDir,
+				resolution.cacheDir,
+				resolution.tmpDir,
+				resolution.logsDir,
+			]
+		: [
+				root,
+				resolution.binDir,
+				resolution.modelsDir,
+				vendorDir,
+				resolution.configDir,
+				resolution.cacheDir,
+				resolution.tmpDir,
+				resolution.logsDir,
+			];
 
-	const allowed = reasonsDenied.length === 0;
+	// Never schedule shared/lab trees (WD-Black, Voxtype) even if GENTLE_VOICE_MODELS points there.
+	let directories = candidates
+		.map(normalizeStoragePath)
+		.filter((p) => isSafePrivateCleanupPath(p, root));
+
+	if (keepModels) {
+		directories = directories.filter(
+			(p) => !pathsEqual(p, modelsDir) && !isPathInside(modelsDir, p),
+		);
+	}
+
+	const allowed = reasonsDenied.length === 0 && directories.length > 0;
+	if (reasonsDenied.length === 0 && directories.length === 0) {
+		reasonsDenied.push("no safe private gentle-voice directories to delete");
+	}
 	return {
 		allowed,
 		storageRoot: root,
 		hostKind: resolution.hostKind,
-		directories: [...new Set(directories.map(normalizeStoragePath))],
+		directories: [...new Set(directories)],
 		reasonsDenied,
+		keepModels,
 		note: allowed
-			? "Dry-run only. Deleting these paths removes STT/TTS binaries, models, voices, cache and Gentle Voice config. It does not uninstall the npm package from Pi/GS."
+			? keepModels
+				? "Dry-run only. keepModels=true — deletes binaries/config/cache/tmp/logs under private gentle-voice roots; preserves modelsDir (STT models + TTS voices). Shared trees (Voxtype/WD-Black) are never listed. Does not uninstall the npm package from Pi/GS."
+				: "Dry-run only. Deleting these paths removes STT/TTS binaries, models, voices, cache and Gentle Voice config under private gentle-voice roots. Shared trees (Voxtype/WD-Black) are never listed. Does not uninstall the npm package from Pi/GS."
 			: "Cleanup refused — see reasonsDenied.",
 	};
+}
+
+/** Private cleanup targets only — basename gentle-voice or nested under storageRoot; never WD-Black/voxtype. */
+export function isSafePrivateCleanupPath(path: string, storageRoot: string): boolean {
+	const p = normalizeStoragePath(path);
+	const root = normalizeStoragePath(storageRoot);
+	if (!p || p === sep) return false;
+	if (p.includes("WD-Black") || /[/\\]voxtype[/\\]/i.test(p) || /[/\\]voxtype$/i.test(p)) {
+		return false;
+	}
+	if (/[/\\]\.gentle-shell[/\\](versions|runtime)([/\\]|$)/.test(p)) return false;
+	const parts = p.split(/[/\\]/).filter(Boolean);
+	if (!parts.includes("gentle-voice")) return false;
+	if (isPathInside(root, p) || pathsEqual(root, p)) return true;
+	// Pi XDG siblings: ~/.config/gentle-voice, ~/.cache/gentle-voice
+	return parts[parts.length - 1] === "gentle-voice";
 }
 
 export function formatStorageDiagnostics(resolution: GentleVoiceStorageResolution): string {

@@ -2,6 +2,35 @@
 
 All notable changes to Gentle Voice are documented here.
 
+## [0.1.2] — 2026-10-20
+
+Phase 3.5 — production conversation UX, honest status, safe uninstall/cleanup.
+
+### Added
+
+- Product Ctrl+Alt+Space / Ctrl+Alt+E registration without `GENTLE_VOICE_LAB*` (opt-out: `GENTLE_VOICE_DISABLE_SHORTCUTS=1`).
+- `/gentle:voice converse on|off` as a product command (hands-free session).
+- `/gentle:voice purge` + `gentle-voice-cleanup` CLI for optional private-data removal with explicit confirm token.
+- `--keep-models` on purge / `gentle-voice-cleanup` — preserve private `models/` (STT models + TTS voices) while removing binaries, config, cache, and tmp.
+- Docs: `docs/phase35-uninstall-pnpm.md`, `docs/phase35-voice-refs.md`.
+
+### Changed
+
+- Conversation sessions enable fluent + auto-submit by default (opt-out: `GENTLE_VOICE_DISABLE_AUTO_SUBMIT=1`).
+- Help/status no longer present “phase 2C”; status distinguishes engine readiness, conversation, registered shortcuts vs OS key delivery.
+- Dictation still requires explicit `/gentle:voice send`.
+
+### Fixed (pre-publish)
+
+- Cleanup deletes Pi XDG **config** + **cache** gentle-voice roots, not only `share/` (complete remove).
+- `gentle-voice-repair-settings` repairs partial unregister (`settings` vs npm) without defaulting to `~/.pi`.
+- Windows CI path asserts in cleanup tests (normalize `\` vs `/`).
+
+### Notes
+
+- Does not overwrite published `0.1.1`. Windows / macOS / portable Kokoro still unsupported claims.
+- `pi remove` + `ERR_PNPM_IGNORED_BUILDS` is a Pi/`allowBuilds` + `pi-lens`→`@ast-grep/cli` issue — see uninstall doc.
+
 ## [0.1.1] — 2026-10-19
 
 Gentle Shell isolation + lab-path hard gate for published product behaviour.

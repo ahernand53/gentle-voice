@@ -31,6 +31,8 @@ export type VoiceCommandName =
 	| "send"
 	| "draft"
 	| "edit"
+	| "converse"
+	| "purge"
 	| "";
 
 /** Platform identifiers for capture/playback adapters. */

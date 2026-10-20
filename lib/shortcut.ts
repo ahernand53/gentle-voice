@@ -1,6 +1,7 @@
 /**
- * Preferred voice shortcut: Ctrl+Alt+Space.
- * Register only after availability is verified. Never auto-pick a fallback chord.
+ * Preferred voice shortcuts: Ctrl+Alt+Space (conversation toggle), Ctrl+Alt+E (edit).
+ * Product mode registers when the host exposes registerShortcut unless explicitly disabled.
+ * Lab env gates remain available for experimental probing — they are not required for product.
  */
 
 import type { VoiceHostApi, VoiceHostContext } from "./contracts.ts";
@@ -11,6 +12,11 @@ import {
 } from "./engines/contracts.ts";
 
 export { PREFERRED_SHORTCUT, PREFERRED_SHORTCUT_LABEL };
+
+export const PRODUCT_SHORTCUT_CHORDS = Object.freeze([
+	"ctrl+alt+space",
+	"ctrl+alt+e",
+] as const);
 
 export interface ShortcutProbe {
 	/**
@@ -25,21 +31,53 @@ export function deniedShortcutProbe(): ShortcutProbe {
 	return { isAvailable: () => false };
 }
 
+export function allowlistShortcutProbe(allowed: readonly string[]): ShortcutProbe {
+	const set = new Set(allowed.map((s) => s.toLowerCase()));
+	return {
+		isAvailable: (shortcut) => set.has(shortcut.toLowerCase()),
+	};
+}
+
 /**
- * Lab-only enable gate. Requires ALL of:
+ * Product shortcut gate (phase 3.5+).
+ * Enabled by default for the preferred chords.
+ * Disable with GENTLE_VOICE_DISABLE_SHORTCUTS=1.
+ * Does not require GENTLE_VOICE_LAB / LAB_SHORTCUT / SHORTCUT_VERIFIED.
+ * Does not read/write Hyprland or Ghostty configs — registration is host-API only.
+ * "Available" here means "allowed to register with Pi", not "OS delivered the key".
+ */
+export function productShortcutProbeFromEnv(
+	env: NodeJS.ProcessEnv = process.env,
+	allowed: readonly string[] = PRODUCT_SHORTCUT_CHORDS,
+): ShortcutProbe {
+	if (env.GENTLE_VOICE_DISABLE_SHORTCUTS === "1") return deniedShortcutProbe();
+	return allowlistShortcutProbe(allowed);
+}
+
+/**
+ * Lab-only enable gate (legacy / experimental). Requires ALL of:
  * - GENTLE_VOICE_LAB=1
  * - GENTLE_VOICE_LAB_SHORTCUT=1
- * - explicit allowlist of the preferred chord
  * Never reads/writes global Hyprland/Ghostty configs.
  */
 export function labShortcutProbeFromEnv(
 	env: NodeJS.ProcessEnv = process.env,
-	allowed: readonly string[] = ["ctrl+alt+space", "ctrl+alt+e"],
+	allowed: readonly string[] = PRODUCT_SHORTCUT_CHORDS,
 ): ShortcutProbe {
 	const lab = env.GENTLE_VOICE_LAB === "1";
 	const enable = env.GENTLE_VOICE_LAB_SHORTCUT === "1";
 	if (!lab || !enable) return deniedShortcutProbe();
 	return allowlistShortcutProbe(allowed);
+}
+
+/**
+ * Default probe for the extension: product unless tests inject one.
+ * SHORTCUT_VERIFIED is ignored for enablement (status may still report the env bit).
+ */
+export function defaultVoiceShortcutProbe(
+	env: NodeJS.ProcessEnv = process.env,
+): ShortcutProbe {
+	return productShortcutProbeFromEnv(env);
 }
 
 /**
@@ -71,13 +109,6 @@ export async function maybeRegisterExtraShortcut(
 	return { registered: true, reason: `registered:${chord}` };
 }
 
-export function allowlistShortcutProbe(allowed: readonly string[]): ShortcutProbe {
-	const set = new Set(allowed.map((s) => s.toLowerCase()));
-	return {
-		isAvailable: (shortcut) => set.has(shortcut.toLowerCase()),
-	};
-}
-
 /**
  * Evaluate preferred shortcut. Never registers an alternate chord.
  */
@@ -101,7 +132,6 @@ export async function evaluatePreferredShortcut(options?: {
 
 	const configured = options?.configuredShortcut?.trim();
 	if (configured && configured !== preferred) {
-		// User overrode in config — still verify that exact chord; do not invent another.
 		const ok = await probe.isAvailable(configured);
 		return {
 			preferred,
@@ -158,7 +188,6 @@ export async function maybeRegisterVoiceShortcut(
 		? options.configuredShortcut.trim()
 		: PREFERRED_SHORTCUT;
 
-	// Re-check the actual chord we will bind.
 	const probe = options.probe ?? deniedShortcutProbe();
 	if (!(await probe.isAvailable(chord))) {
 		return {
@@ -170,7 +199,7 @@ export async function maybeRegisterVoiceShortcut(
 	}
 
 	pi.registerShortcut!(chord, {
-		description: "Gentle Voice listen/stop",
+		description: "Gentle Voice conversation toggle (listen/stop)",
 		handler: async (ctx) => {
 			await options.handler(ctx);
 		},

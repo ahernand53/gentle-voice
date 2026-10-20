@@ -1,6 +1,6 @@
 {
 	"name": "gentle-voice",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"description": "Local voice conversation extension for Pi Coding Agent and Gentle Shell (STT/TTS).",
 	"license": "MIT",
 	"type": "module",
@@ -12,6 +12,10 @@
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/efolchmontiel/gentle-voice.git"
+	},
+	"bin": {
+		"gentle-voice-cleanup": "./bin/gentle-voice-cleanup.mjs",
+		"gentle-voice-repair-settings": "./bin/gentle-voice-repair-settings.mjs"
 	},
 	"keywords": [
 		"pi-package",
@@ -27,6 +31,7 @@
 	],
 	"files": [
 		"assets/",
+		"bin/",
 		"docs/",
 		"!docs/experimental-integration.md",
 		"extensions/",
