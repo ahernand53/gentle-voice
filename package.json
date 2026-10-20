@@ -14,8 +14,8 @@
 		"url": "git+https://github.com/efolchmontiel/gentle-voice.git"
 	},
 	"bin": {
-		"gentle-voice-cleanup": "./bin/gentle-voice-cleanup.js",
-		"gentle-voice-repair-settings": "./bin/gentle-voice-repair-settings.js"
+		"gentle-voice-cleanup": "bin/gentle-voice-cleanup.js",
+		"gentle-voice-repair-settings": "bin/gentle-voice-repair-settings.js"
 	},
 	"keywords": [
 		"pi-package",
