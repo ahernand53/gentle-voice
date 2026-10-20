@@ -70,6 +70,13 @@ export interface VoiceBehaviorConfig {
 	/** Max intra-utterance pause that does not end capture (ms). */
 	vadMaxIntraPauseMs: number;
 	/**
+	 * VAD backend: energy | silero | auto (try Silero, fall back to energy).
+	 * Default auto — without Silero model/ORT, identical to energy.
+	 */
+	vadBackend: "energy" | "silero" | "auto";
+	/** Optional path to silero_vad.onnx (else GENTLE_VOICE_SILERO_VAD). */
+	sileroModelPath?: string;
+	/**
 	 * Phase 2D: show real-PCM Unicode wave bars in the aboveEditor widget.
 	 * When false, chrome stays single-line (no animation / no meter paint).
 	 */
@@ -120,6 +127,7 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = Object.freeze({
 		/** Slightly more sensitive for quiet close-mic speech (phase 3.6). */
 		vadSpeechThreshold: 0.009,
 		vadMaxIntraPauseMs: 450,
+		vadBackend: "auto" as const,
 		visualWaves: true,
 		visualFps: 12,
 		echoSettleMs: 350,
@@ -259,6 +267,16 @@ export function validateVoiceConfig(input: unknown): VoiceConfigValidation {
 				errors,
 				DEFAULT_VOICE_CONFIG.behavior.vadMaxIntraPauseMs,
 			),
+			vadBackend: ((): "energy" | "silero" | "auto" => {
+				const v = behaviorIn.vadBackend;
+				if (v === undefined) return DEFAULT_VOICE_CONFIG.behavior.vadBackend;
+				if (v === "energy" || v === "silero" || v === "auto") return v;
+				errors.push("behavior.vadBackend must be energy|silero|auto");
+				return DEFAULT_VOICE_CONFIG.behavior.vadBackend;
+			})(),
+			...(typeof behaviorIn.sileroModelPath === "string" && behaviorIn.sileroModelPath.trim()
+				? { sileroModelPath: behaviorIn.sileroModelPath.trim() }
+				: {}),
 			visualWaves: behaviorIn.visualWaves === undefined
 				? DEFAULT_VOICE_CONFIG.behavior.visualWaves
 				: typeof behaviorIn.visualWaves === "boolean"

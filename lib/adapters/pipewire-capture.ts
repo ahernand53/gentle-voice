@@ -1,6 +1,7 @@
 /**
  * Linux PipeWire capture via `pw-record` (stdout PCM s16).
- * Optional energy VAD auto-ends the utterance. No system audio config changes.
+ * Optional VAD (Silero → energy fallback) auto-ends the utterance.
+ * No system audio config changes.
  */
 
 import { spawn } from "node:child_process";
@@ -14,7 +15,13 @@ import type {
 	CaptureSession,
 } from "../contracts.ts";
 import { AbortError, ignoreUnhandledAbort, onAbort, throwIfAborted } from "../process-cancel.ts";
-import { createEnergyVad, type EnergyVadOptions } from "../vad/energy-vad.ts";
+import type { EnergyVadOptions } from "../vad/energy-vad.ts";
+import {
+	resolveEnergyVadOnly,
+	resolveVad,
+	type VadBackendPreference,
+} from "../vad/resolve-vad.ts";
+import type { VadEngine } from "../vad/types.ts";
 import { pcmS16leToWav } from "./wav.ts";
 
 function chunkRmsS16le(pcm: Buffer, channels: number): number {
@@ -37,7 +44,14 @@ export interface PipewireCaptureOptions {
 	readonly pwRecordPath?: string;
 	readonly sampleRateHz?: number;
 	readonly channels?: 1 | 2;
+	/** Energy VAD options, or false to disable VAD. Ignored when vadEngine is set. */
 	readonly vad?: EnergyVadOptions | false;
+	/** energy | silero | auto (default auto when Silero path/env present). */
+	readonly vadBackend?: VadBackendPreference;
+	/** Absolute path to silero_vad.onnx (or set GENTLE_VOICE_SILERO_VAD). */
+	readonly sileroModelPath?: string;
+	/** Pre-built engine (tests). Skips resolveVad. */
+	readonly vadEngine?: VadEngine;
 	readonly onVadEnd?: () => void;
 	/**
 	 * Delay after capture start before VAD may end an utterance (echo settle).
@@ -46,6 +60,8 @@ export interface PipewireCaptureOptions {
 	readonly vadArmDelayMs?: number;
 	/** Fired once when the first PCM chunk arrives (mic really producing). */
 	readonly onFirstPcm?: (info: { captureId: string; atMs: number }) => void;
+	/** Lab/metrics: which backend was selected for the last start(). */
+	readonly onVadResolved?: (info: { backend: string; fallbackReason?: string }) => void;
 }
 
 async function isExecutable(path: string): Promise<boolean> {
@@ -109,13 +125,34 @@ export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {
 				stderr += c.toString("utf8");
 			});
 
-			const vad = vadEnabled
-				? createEnergyVad({
+			let vad: VadEngine | undefined;
+			if (options.vadEngine) {
+				vad = options.vadEngine;
+				options.onVadResolved?.({ backend: vad.backend });
+			} else if (vadEnabled) {
+				const energyOpts: EnergyVadOptions = {
 					...(typeof options.vad === "object" ? options.vad : {}),
 					sampleRateHz,
 					maxListenMs,
-				})
-				: undefined;
+				};
+				const resolved = options.vadBackend === "energy"
+					? resolveEnergyVadOnly(energyOpts)
+					: await resolveVad({
+						preference: options.vadBackend ?? "auto",
+						energy: energyOpts,
+						silero: {
+							modelPath: options.sileroModelPath,
+							sampleRateHz,
+							maxListenMs,
+							maxIntraPauseMs: energyOpts.maxIntraPauseMs,
+						},
+					});
+				vad = resolved.engine;
+				options.onVadResolved?.({
+					backend: resolved.backend,
+					...(resolved.fallbackReason ? { fallbackReason: resolved.fallbackReason } : {}),
+				});
+			}
 
 			let settle!: (chunk: AudioChunk) => void;
 			let fail!: (err: Error) => void;

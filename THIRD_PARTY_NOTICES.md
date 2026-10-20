@@ -26,10 +26,18 @@ tarball) come from upstream projects. First-run consent must surface these terms
   elsewhere), you must keep attribution and share-alike terms. Gentle Voice downloads
   it into the user's private data directory and does **not** re-upload the weights to npm.
 
+## Silero VAD (optional)
+
+- Model: https://github.com/snakers4/silero-vad — **MIT**
+- Runtime (optionalDependency): `onnxruntime-node` — **MIT**
+- Not required for install: without the model/runtime, Gentle Voice keeps energy VAD.
+- Do not vendor BUSL wrappers from other Pi voice packages.
+
 ## Kokoro (optional lab)
 
 - Used only when present under a developer lab install.
-- Not the portable default. Apache-2.0 (engine) — verify voice assets separately.
+- Not portable product default. Apache-2.0 (engine) — verify voice assets separately.
+- Not announced as functional until a real portable implementation ships.
 
 ## FFmpeg (optional OS audio)
 

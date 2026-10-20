@@ -78,6 +78,9 @@
 			"optional": true
 		}
 	},
+	"optionalDependencies": {
+		"onnxruntime-node": "^1.20.0"
+	},
 	"devDependencies": {
 		"@types/node": "^24.13.3",
 		"typescript": "^5.9.3"
