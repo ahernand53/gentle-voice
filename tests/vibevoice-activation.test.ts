@@ -47,6 +47,9 @@ function fixtureArtifacts(): { artifacts: VibeVoiceArtifact[]; io: OnboardingIo 
 				writeFileSync(destination, bodies.get(item.id)!);
 			},
 			async run(_command, args) {
+				if (args[0] === "-c" && String(args[1]).includes("GVPY")) {
+					return { code: 0, detail: "GVPY 3.14" };
+				}
 				if (args[0] === "-m" && args[1] === "venv") {
 					const venv = args[2]!;
 					mkdirSync(join(venv, "bin"), { recursive: true });

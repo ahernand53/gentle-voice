@@ -118,18 +118,7 @@ function existingDirectory(path: string): string {
 	return "/";
 }
 
-/** Light check that `python3 -m venv` can be imported. Does not create an environment. */
-export function python3CanCreateVenv(): boolean {
-	try {
-		execFileSync("python3", ["-c", "import venv"], {
-			timeout: 2000,
-			stdio: "ignore",
-		});
-		return true;
-	} catch {
-		return false;
-	}
-}
+export { python3CanCreateVenv } from "./python-runtime.ts";
 
 /** Read-only. Does not install drivers, CUDA, or Python, and does not load a model. */
 export function probeVibeVoiceHardware(targetDir: string): VibeVoiceHardwareReport {

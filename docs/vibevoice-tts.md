@@ -44,7 +44,7 @@ With `GENTLE_VOICE_VIBEVOICE_ALLOW_NETWORK=1` and an accepted confirm dialog, th
 
 1. Pick a directory you own and export `GENTLE_VOICE_VIBEVOICE_HOME` to it.
 2. Read the Microsoft model card and the MIT license for the code. Do not strip the audible disclaimer or the watermark. Spanish is outside the published training scope.
-3. Create `.venv` inside that directory with a local Python 3.11 or 3.12. Do not install into the system Python, and do not change system CUDA or drivers.
+3. Create `.venv` inside that directory with a local Python 3.12, 3.13, or 3.14. Python 3.15 has no PyTorch wheel. Do not install into the system Python, and do not change system CUDA or drivers.
 4. Install the VibeVoice runtime and a CUDA PyTorch build into that venv only.
 5. Put the Realtime 0.5B weights at `models/VibeVoice-Realtime-0.5B/model.safetensors`.
 6. Put `sp-Spk0_woman.pt` in `voices/` or in `code/demo/voices/streaming_model/`.

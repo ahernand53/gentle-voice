@@ -17,6 +17,7 @@ import {
 	uninstallVibeVoiceEngine,
 	type OnboardingIo,
 } from "../lib/vibevoice/onboarding.ts";
+import { vibeVoicePythonSupported } from "../lib/vibevoice/python-runtime.ts";
 import { planVibeVoiceInstall } from "../lib/vibevoice/install-plan.ts";
 import {
 	chooseTtsEngine,
@@ -69,6 +70,9 @@ function fakeIo(bodies: Map<string, string>, calls: string[], opts?: { fail?: st
 		async run(command, args) {
 			calls.push([command, ...args].join(" "));
 			const commandPath = slash(command);
+			if (args[0] === "-c" && String(args[1]).includes("GVPY")) {
+				return { code: 0, detail: "GVPY 3.14" };
+			}
 			if (command === "sudo" || args.includes("sudo")) return { code: 9 };
 			if (args[0] === "-m" && args[1] === "venv") {
 				const venv = args[2]!;
@@ -186,7 +190,7 @@ test("simulated install verifies hashes, uses a private venv, and selects PCM", 
 	assert.equal(marker.authorized, true);
 	const receipt = JSON.parse(readFileSync(join(target, "integrity.json"), "utf8")) as { kind?: string };
 	assert.equal(receipt.kind, "gentle-voice.vibevoice-integrity");
-	assert.equal(calls.some((call) => call.startsWith("python3 -m venv ") && slash(call).includes(slash(target))), true);
+	assert.equal(calls.some((call) => call.startsWith("python3.14 -m venv ") && slash(call).includes(slash(target))), true);
 	assert.equal(calls.some((call) => slash(call).includes("/.venv/bin/pip install")), true);
 	assert.equal(calls.some((call) => call.startsWith("sudo")), false);
 	assert.equal(readFileSync(outside, "utf8"), "keep");
@@ -627,4 +631,48 @@ with tarfile.open(link, "w:gz") as tar:
 		() => extractTarMember(join(root, "link.tar.gz"), "sp-Spk0_woman.pt", join(root, "linked.pt")),
 		/archive_symlink/,
 	);
+});
+
+test("PyTorch wheel range accepts 3.10 through 3.14 and rejects 3.15", () => {
+	assert.equal(vibeVoicePythonSupported("GVPY 3.14"), true);
+	assert.equal(vibeVoicePythonSupported("GVPY 3.10"), true);
+	assert.equal(vibeVoicePythonSupported("GVPY 3.15"), false);
+	assert.equal(vibeVoicePythonSupported("3.14"), false);
+});
+
+test("an existing Python 3.15 venv is replaced by Python 3.14", async () => {
+	const { target, voiceHome } = layout();
+	const { artifacts, bodies } = fixtures();
+	const calls: string[] = [];
+	mkdirSync(join(target, ".venv/bin"), { recursive: true });
+	writeFileSync(join(target, ".venv/OLD"), "stale");
+	writeFileSync(join(target, ".venv/bin/python"), "#!/bin/sh\n");
+	writeFileSync(join(target, ".venv/bin/pip"), "#!/bin/sh\n");
+	const io = fakeIo(bodies, calls);
+	const original = io.run.bind(io);
+	let readyChecks = 0;
+	io.run = async (command, args, signal) => {
+		if (command === "python3" && String(args[1] ?? "").includes("GVPY")) {
+			return { code: 0, detail: "GVPY 3.15" };
+		}
+		if (slash(command).endsWith("/.venv/bin/python") && String(args[1] ?? "").includes("version_info")) {
+			readyChecks += 1;
+			if (readyChecks === 1) return { code: 3, detail: "GVPY 3.15" };
+		}
+		return original(command, args, signal!);
+	};
+	const result = await runVibeVoiceOnboarding({
+		targetDir: target,
+		voiceHome,
+		hardware,
+		alreadyInstalled: false,
+		consent: true,
+		allowNetwork: true,
+		io,
+		artifacts,
+	});
+	assert.equal(result.status, "installed");
+	assert.equal(calls.some((call) => call.startsWith("python3.14 -m venv ")), true);
+	assert.equal(calls.some((call) => call.startsWith("python3 -m venv ")), false);
+	assert.throws(() => readFileSync(join(target, ".venv/OLD")));
 });
