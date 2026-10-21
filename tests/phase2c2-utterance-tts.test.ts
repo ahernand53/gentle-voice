@@ -53,14 +53,16 @@ test("2C.2: yes/no primary preserved", () => {
 	assert.match(result.text, /^Sí/i);
 });
 
-test("2C.2: warning still preferred among long preamble", () => {
+test("2C.2: opening kept; warning/conclusion still selected within budget", () => {
 	const body = [
 		"I inspected several files in the repository and considered a few options along the way.",
 		"There was also a long discussion about formatting preferences that is not actionable.",
 		"Warning: do not deploy with the debug flag enabled.",
 		"In summary, the login bug is fixed and tests are green.",
 	].join(" ");
-	const spoken = selectSpokenSentences(body, { maxSentences: 2, maxChars: 400 });
+	// Budget 3: opening (mandatory) + ranked cues — never start at Warning alone.
+	const spoken = selectSpokenSentences(body, { maxSentences: 3, maxChars: 500 });
+	assert.match(spoken, /^I inspected/i);
 	assert.match(spoken, /Warning/i);
 	assert.match(spoken, /summary|fixed|green/i);
 });

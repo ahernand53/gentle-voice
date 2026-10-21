@@ -52,6 +52,115 @@ function toWavBytes(audio: AudioChunk): Uint8Array {
 	return pcmS16leToWav(audio.bytes, audio.sampleRateHz, audio.channels);
 }
 
+export interface RawPcmStream {
+	write(pcm: Uint8Array): void;
+	/** Close stdin so pw-play drains and exits. */
+	finish(): void;
+	readonly done: Promise<void>;
+	stop(): Promise<void>;
+}
+
+/**
+ * Progressive playback. WAV `play()` stays the default path.
+ * `pw-play --raw --format f32` is the installed PipeWire reader for float32 mono.
+ */
+export function openPipewirePcmStream(options: {
+	signal: AbortSignal;
+	sampleRateHz: number;
+	channels: number;
+	format: "f32" | "s16";
+	pwPlayPath?: string;
+}): RawPcmStream {
+	const bin = options.pwPlayPath ?? "pw-play";
+	const args = [
+		"--raw",
+		`--rate=${options.sampleRateHz}`,
+		`--channels=${options.channels}`,
+		`--format=${options.format}`,
+		"--latency=80ms",
+		"-",
+	];
+	const child = spawn(bin, args, { stdio: ["pipe", "ignore", "pipe"] });
+	let stderr = "";
+	child.stderr?.on("data", (c: Buffer) => {
+		stderr += c.toString("utf8");
+	});
+	let settled = false;
+	let finished = false;
+	let cancelled = false;
+	let playbackError: Error | undefined;
+
+	const stop = async () => {
+		cancelled = true;
+		if (settled) return;
+		finished = true;
+		try {
+			child.stdin?.end();
+		} catch {
+			/* already closed */
+		}
+		if (!child.killed) child.kill("SIGINT");
+		await new Promise<void>((resolve) => {
+			child.once("exit", () => resolve());
+			setTimeout(() => {
+				if (!child.killed) child.kill("SIGTERM");
+				resolve();
+			}, 1_500);
+		});
+		settled = true;
+	};
+
+	const detach = onAbort(options.signal, () => {
+		void stop();
+	});
+
+	const done = new Promise<void>((resolve, reject) => {
+		child.once("exit", (code, sig) => {
+			detach();
+			settled = true;
+			if (options.signal.aborted || cancelled) {
+				resolve();
+				return;
+			}
+			if (code !== 0 || sig) {
+				playbackError = new Error(`pw-play raw exited ${code}${sig ? ` (${sig})` : ""}: ${stderr.trim().slice(-300)}`);
+				reject(playbackError);
+				return;
+			}
+			resolve();
+		});
+		child.once("error", (err) => {
+			detach();
+			settled = true;
+			playbackError = err;
+			reject(err);
+		});
+	});
+	// Playback may fail while the model is still loading. Keep the rejection
+	// handled until the owner awaits done, without hiding it from that owner.
+	void done.catch(() => {});
+	child.stdin?.on("error", (err) => { playbackError = err; });
+
+	return {
+		write(pcm: Uint8Array) {
+			if (playbackError) throw playbackError;
+			if (settled || options.signal.aborted || pcm.byteLength === 0) return;
+			child.stdin?.write(pcm);
+		},
+		finish() {
+			if (settled || finished) return;
+			finished = true;
+			try {
+				child.stdin?.end();
+			} catch {
+				/* already closed */
+			}
+		},
+		done,
+		stop,
+	};
+}
+
 export function createPipewirePlaybackAdapter(
 	options: PipewirePlaybackOptions = {},
 ): PlaybackAdapter {

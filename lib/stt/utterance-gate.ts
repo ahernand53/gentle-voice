@@ -11,6 +11,8 @@ export type UtteranceRejectReason =
 	| "no_speech_seen"
 	| "rms_too_low"
 	| "too_short"
+	| "voiced_too_short"
+	| "cancelled"
 	| "prompt_echo"
 	| "empty_text"
 	| "ok";
@@ -26,6 +28,8 @@ export interface UtteranceGateInput {
 	readonly minPeakRms?: number;
 	/** Min duration with speech (ms). */
 	readonly minDurationMs?: number;
+	/** Min samples above the VAD threshold (ms). Clicks fail; a short syllable passes. */
+	readonly minVoicedMs?: number;
 }
 
 export interface UtteranceGateResult {
@@ -64,6 +68,11 @@ export function isLikelyWhisperPromptEcho(
 	return false;
 }
 
+/** Capture facts for a turn that produced no transcript. Thresholds stay unchanged. */
+export function formatNoSpeechDetail(meta: CaptureSegmentMeta): string {
+	return `peak ${meta.peakRms.toFixed(4)}, ${meta.durationMs}ms, voiced ${meta.voicedMs ?? 0}ms, end ${meta.endReason}`;
+}
+
 /**
  * Decide whether a transcript may auto-submit.
  * Reject → caller must NOT send; may fall back to manual review or silence.
@@ -74,6 +83,7 @@ export function gateUtteranceForAutoSubmit(input: UtteranceGateInput): Utterance
 	const minMean = input.minMeanRms ?? 0.004;
 	const minPeak = input.minPeakRms ?? 0.01;
 	const minDur = input.minDurationMs ?? 280;
+	const minVoiced = input.minVoicedMs ?? 180;
 	const prompt = input.whisperPrompt ?? DEFAULT_WHISPER_INITIAL_PROMPT;
 
 	const baseDiag = meta
@@ -96,8 +106,14 @@ export function gateUtteranceForAutoSubmit(input: UtteranceGateInput): Utterance
 	if (meta.meanRms < minMean && meta.peakRms < minPeak) {
 		return { accept: false, reason: "rms_too_low", diag: `${baseDiag} reject=rms_too_low chars=${text.length}` };
 	}
+	if (meta.endReason === "stop") {
+		return { accept: false, reason: "cancelled", diag: `${baseDiag} reject=cancelled chars=${text.length}` };
+	}
 	if (meta.durationMs < minDur) {
 		return { accept: false, reason: "too_short", diag: `${baseDiag} reject=too_short chars=${text.length}` };
+	}
+	if (meta.voicedMs !== undefined && meta.voicedMs < minVoiced) {
+		return { accept: false, reason: "voiced_too_short", diag: `${baseDiag} reject=voiced_too_short voicedMs=${meta.voicedMs} chars=${text.length}` };
 	}
 	if (isLikelyWhisperPromptEcho(text, prompt)) {
 		return { accept: false, reason: "prompt_echo", diag: `${baseDiag} reject=prompt_echo chars=${text.length}` };

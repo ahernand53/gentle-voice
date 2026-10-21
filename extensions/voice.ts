@@ -1,12 +1,26 @@
 /**
  * Pi extension entry — Gentle Voice.
  * Conversation + shortcuts are product features (no LAB required).
- * Lab-only: test-speak / ab-compare / tts switch (GENTLE_VOICE_LAB=1).
+ * Lab-only: test-speak / ab-compare / converse-style / voice-ai-profile.
  */
 
 import { randomUUID } from "node:crypto";
 import type { VoiceHostApi, VoiceHostCommandContext } from "../lib/contracts.ts";
-import { DEFAULT_VOICE_CONFIG, resolveVoicePaths, validateVoiceConfig, type VoiceConfig } from "../lib/config.ts";
+import {
+	applyVoiceAiEnvOverrides,
+	DEFAULT_VOICE_CONFIG,
+	resolveVoicePaths,
+	validateVoiceConfig,
+	type VoiceConfig,
+} from "../lib/config.ts";
+import {
+	createModelRegistryHost,
+	createVoiceNarrationAdapter,
+	formatVoiceAiStatus,
+	type NarrationModelHost,
+	type VoiceAiRuntimeConfig,
+} from "../lib/narration/index.ts";
+import { classifyUiPrompt } from "../lib/narration/final-speech-eligibility.ts";
 import {
 	isGentleVoiceLabMode,
 	parseModeFlag,
@@ -16,6 +30,39 @@ import {
 } from "../lib/commands.ts";
 import { probeAdapterBundle } from "../lib/adapters/platform.ts";
 import { resolveLabVoiceAdapters } from "../lib/adapters/lab-resolve.ts";
+import { createVibeVoicePiperBridge } from "../lib/adapters/vibevoice-piper-bridge.ts";
+import {
+	isVibeVoiceReady,
+	probeVibeVoiceReadiness,
+	resolveVibeVoiceHome,
+	resolveVibeVoiceOnColdStart,
+	type VibeVoiceTtsAdapter,
+} from "../lib/adapters/vibevoice-tts.ts";
+import {
+	formatVibeVoiceConsent,
+	formatVibeVoiceInstallPlan,
+	planVibeVoiceInstall,
+	probeVibeVoiceHardware,
+} from "../lib/vibevoice/install-plan.ts";
+import { readDuplicateVoiceWarning } from "../lib/runtime/duplicate-voice.ts";
+import { createNetworkOnboardingIo } from "../lib/vibevoice/network-io.ts";
+import { formatInstallView } from "../lib/vibevoice/install-progress.ts";
+import {
+	describeConversationReadiness,
+	planSileroInstall,
+} from "../lib/vad/silero-install.ts";
+import { formatCapabilities, readCapabilities } from "../lib/runtime/capabilities.ts";
+import { driveVibeVoiceInstall } from "../lib/vibevoice/install-drive.ts";
+import {
+	beginVibeVoiceInstall,
+	cancelVibeVoiceInstall,
+	commandSkipsInstallWait,
+	vibeVoiceInstallSnapshot,
+} from "../lib/vibevoice/install-session.ts";
+import {
+	resolveVoiceHomeForTts,
+	writeTtsEnginePreference,
+} from "../lib/vibevoice/tts-preference.ts";
 import { LAB_TEST_SPEAK_PHRASE } from "../lib/adapters/piper-tts.ts";
 import { VoiceSession } from "../lib/voice-session.ts";
 import {
@@ -48,6 +95,11 @@ import { voiceWidgetContent } from "../lib/visual/compact-widget.ts";
 import { runFirstRunPreparation } from "../lib/runtime/first-run.ts";
 import { formatCompatMarkdown } from "../lib/runtime/compat-matrix.ts";
 import {
+	createEditorHistoryBinding,
+	isLoneEscape,
+	restorePromptAfterVoiceEscape,
+} from "../lib/editor-history.ts";
+import {
 	formatStorageDiagnostics,
 	planGentleVoiceDataCleanup,
 	resolveGentleVoiceStorage,
@@ -57,6 +109,32 @@ import {
 	executeGentleVoiceDataCleanup,
 	formatCleanupPlan,
 } from "../lib/runtime/cleanup.ts";
+import {
+	injectConverseStyleIfEnabled,
+	readConverseStyleState,
+	resolveVoiceHomeForStyle,
+	writeConverseStyleState,
+} from "../lib/converse-style.ts";
+import {
+	readVoiceAiPreference,
+	resolveVoiceAiActivation,
+	resolveVoiceHomeForPreference,
+	writeVoiceAiPreference,
+} from "../lib/narration/voice-ai-preference.ts";
+import {
+	readBargePreference,
+	resolveBargeActivation,
+	resolveVoiceHomeForBarge,
+	writeBargePreference,
+} from "../lib/barge-in/preference.ts";
+import {
+	pipewireFloat32PlaybackSupported,
+	readVibeVoicePlaybackPreference,
+	resolveVibeVoicePlayback,
+	voiceHomeForPlayback,
+	writeVibeVoicePlaybackPreference,
+	type VibeVoicePlaybackPreference,
+} from "../lib/adapters/vibevoice-pcm.ts";
 
 export { VOICE_STATUS_KEY, VOICE_WIDGET_KEY };
 
@@ -117,6 +195,28 @@ export function updateChrome(ctx: VoiceHostCommandContext, session: VoiceSession
 	}
 }
 
+function applyVoiceAiActivation(session: VoiceSession, fluentConversation: boolean): ReturnType<typeof resolveVoiceAiActivation> {
+	const activation = resolveVoiceAiActivation({
+		preference: readVoiceAiPreference(resolveVoiceHomeForPreference()),
+		fluentConversation,
+		env: process.env,
+	});
+	if (session.config.voiceAi.enabled !== activation.enabled) {
+		session.replaceConfig({
+			...session.config,
+			voiceAi: { ...session.config.voiceAi, enabled: activation.enabled },
+		});
+	}
+	return activation;
+}
+
+function bargeActivation(fluentConversation: boolean) {
+	return resolveBargeActivation({
+		preference: readBargePreference(resolveVoiceHomeForBarge()),
+		fluentConversation,
+	});
+}
+
 /** Start hands-free conversation (product — no LAB required). Mic stays off until LISTEN. */
 function enableConversationSession(session: VoiceSession): void {
 	const auto = conversationAutoSubmitEnabled();
@@ -132,6 +232,7 @@ function enableConversationSession(session: VoiceSession): void {
 			vadMaxIntraPauseMs: Math.max(session.config.behavior.vadMaxIntraPauseMs, 500),
 		},
 	});
+	applyVoiceAiActivation(session, true);
 	session.dispatch({ type: "ENABLE" });
 	session.dispatch({ type: "SET_MODE", mode: "conversation" });
 }
@@ -147,6 +248,7 @@ function endConversationSession(session: VoiceSession): void {
 			autoSubmitTranscript: false,
 		},
 	});
+	applyVoiceAiActivation(session, false);
 	if (session.state.phase === "listening" || session.state.phase === "speaking" || session.state.phase === "transcribing") {
 		session.dispatch({ type: "STOP" });
 	}
@@ -218,14 +320,15 @@ async function runVoiceEdit(
 }
 
 /**
- * Esc: cancel voice audio; if agent running, call native ctx.abort().
- * Does not consume Esc when voice is idle (menus/editor keep native behavior).
- * Returns true when the key was handled for voice.
+ * Esc cancels Gentle Voice only. It does not call ctx.abort().
+ * Returning `{ consume: true }` stops Pi from treating the same key as
+ * app.interrupt. A second Esc, once voice is idle, is not consumed, so Pi
+ * can still interrupt the orchestrator.
  */
 function handleVoiceEscape(
 	ctx: VoiceHostCommandContext,
 	session: VoiceSession,
-): boolean {
+): { consume: true } | void {
 	const phase = session.state.phase;
 	const busy =
 		phase === "listening"
@@ -234,28 +337,41 @@ function handleVoiceEscape(
 		|| phase === "awaiting_agent"
 		|| session.streamActive
 		|| session.editHold;
-	if (!session.state.enabled || !busy) return false;
+	if (!session.state.enabled || !busy) return;
+
+	const recoverable = [
+		session.pendingReviewText,
+		session.lastSubmittedText,
+		session.lastTranscript,
+	];
 
 	session.cancelVoiceAudio("escape");
 	if (session.editHold) session.endEditHold();
 
-	if (phase === "awaiting_agent" && typeof ctx.abort === "function") {
-		try {
-			ctx.abort();
-		} catch {
-			/* host may refuse — audio already cancelled */
-		}
-	}
+	restorePromptAfterVoiceEscape(ctx, recoverable);
 	updateChrome(ctx, session);
-	return true;
+	return { consume: true };
+}
+
+function voiceAiRuntimeFromConfig(config: VoiceConfig): VoiceAiRuntimeConfig {
+	return {
+		enabled: config.voiceAi.enabled,
+		role: config.voiceAi.role,
+		onError: config.voiceAi.onError,
+		style: config.voiceAi.style,
+		timeoutMs: config.voiceAi.timeoutMs,
+		maxInputChars: config.voiceAi.maxInputChars,
+		preferredProfile: process.env.GENTLE_VOICE_AI_HOST_PROFILE?.trim() || undefined,
+	};
 }
 
 export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOptions = {}): VoiceSession {
-	const config = options.config ?? {
+	const config = applyVoiceAiEnvOverrides(options.config ?? {
 		...DEFAULT_VOICE_CONFIG,
 		engines: { ...DEFAULT_VOICE_CONFIG.engines, language: "es" },
 		behavior: { ...DEFAULT_VOICE_CONFIG.behavior, autoSubmitTranscript: false },
-	};
+		voiceAi: { ...DEFAULT_VOICE_CONFIG.voiceAi },
+	});
 	// Product default: real adapters. node:test sets NODE_TEST_CONTEXT → stubs unless forced.
 	const underNodeTest = Boolean(process.env.NODE_TEST_CONTEXT);
 	const useRealAudio = options.forceStubAdapters === true
@@ -269,6 +385,7 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 					: true;
 
 	const replyTracker = new AgentReplyTracker();
+	const editorHistory = createEditorHistoryBinding();
 	let vadFinish: (() => void) | undefined;
 	let abSession: AbCompareSession | undefined;
 	let firstRunDone = false;
@@ -276,10 +393,44 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 
 	const attachVad = () => {
 		vadFinish = () => {
-			void session.finishListen().then(() => {
-				if (lastCtx) updateChrome(lastCtx, session);
-			});
+			// Must swallow AbortError — Space/Esc aborting mid-Whisper used to crash Pi
+			// with uncaughtException (throwIfAborted in whisper-stt).
+			void session.finishListen()
+				.then(() => {
+					if (lastCtx) updateChrome(lastCtx, session);
+				})
+				.catch((error) => {
+					if (error && typeof error === "object" && (error as { name?: string }).name === "AbortError") {
+						if (lastCtx) updateChrome(lastCtx, session);
+						return;
+					}
+					try {
+						lastCtx?.ui.notify(
+							`Voice listen end failed: ${error instanceof Error ? error.message : String(error)}`,
+							"warning",
+						);
+					} catch {
+						/* ignore */
+					}
+				});
 		};
+	};
+
+	let session: VoiceSession;
+	let lastCtx: VoiceHostCommandContext | undefined;
+
+	let lastVadStatus = "unknown";
+	const notifyVadBackend = (info: { backend: string; fallbackReason?: string }) => {
+		lastVadStatus = info.fallbackReason ? `${info.backend}/${info.fallbackReason}` : info.backend;
+		if (!info.fallbackReason) return;
+		const msg = info.fallbackReason === "silero_model_path_missing"
+			? "VAD: energy. Silero model is not installed. Energy fallback is active."
+			: `VAD: ${info.backend} (fallback: ${info.fallbackReason})`;
+		try {
+			lastCtx?.ui.notify(msg, "warning");
+		} catch {
+			/* host may not be ready */
+		}
 	};
 
 	let resolved = resolveLabVoiceAdapters({
@@ -288,10 +439,23 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 		onVadEnd: () => {
 			vadFinish?.();
 		},
+		onVadResolved: notifyVadBackend,
 	});
 	let adapters = resolved.bundle;
-	let session: VoiceSession;
-	let lastCtx: VoiceHostCommandContext | undefined;
+
+	const prewarmVibeVoiceIfSelected = () => {
+		// Opt-in only: CUDA load at attach starves Silero/Whisper. Prefer submit-time warm.
+		if (process.env.GENTLE_VOICE_VIBEVOICE_PREWARM !== "1") return;
+		const vv = resolved.vibevoiceAdapter as
+			| { prewarm?: () => Promise<void> }
+			| undefined;
+		if (!vv?.prewarm) return;
+		const activeId = session?.deps?.tts?.id;
+		if (activeId !== "vibevoice" && resolved.ttsKind !== "vibevoice") return;
+		void vv.prewarm().catch(() => {
+			/* prewarm is best-effort; first speak still cold-starts */
+		});
+	};
 
 	const rebindAdaptersFromRuntime = () => {
 		if (!useRealAudio) return;
@@ -301,12 +465,63 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 			onVadEnd: () => {
 				vadFinish?.();
 			},
+			onVadResolved: notifyVadBackend,
 		});
 		adapters = resolved.bundle;
 		session.deps.capture = adapters.capture;
 		session.deps.stt = adapters.stt;
 		session.deps.tts = adapters.tts;
 		session.deps.playback = adapters.playback;
+		prewarmVibeVoiceIfSelected();
+	};
+
+	const preparationHost = (ctx: VoiceHostCommandContext) => {
+		const ui = ctx.ui as unknown as {
+			confirm?: (title: string, message: string) => Promise<boolean>;
+			select?: (title: string, options: string[]) => Promise<string | undefined>;
+			setStatus?: (key: string, text: string | undefined) => void;
+			setWidget?: (key: string, content: unknown, options?: { placement?: "aboveEditor" | "belowEditor" }) => void;
+		};
+		return {
+			notify: (message: string, level?: "info" | "warning" | "error") => {
+				try {
+					ctx.ui.notify(message, level ?? "info");
+				} catch {
+					/* ignore */
+				}
+			},
+			...(typeof ui.confirm === "function"
+				? { confirm: (title: string, message: string) => ui.confirm!(title, message) }
+				: {}),
+			...(typeof ui.select === "function"
+				? { select: (title: string, options: readonly string[]) => ui.select!(title, [...options]) }
+				: {}),
+			...(typeof ui.setStatus === "function"
+				? { setStatus: (key: string, text: string | undefined) => ui.setStatus!(key, text) }
+				: {}),
+			...(typeof ui.setWidget === "function"
+				? {
+					setWidget: (key: string, content: unknown, options?: { placement?: "aboveEditor" | "belowEditor" }) =>
+						ui.setWidget!(key, content, options),
+				}
+				: {}),
+			captureReady: async () => (await adapters.capture.availability()).status === "ready",
+			activateEngine: async () => {
+				rebindAdaptersFromRuntime();
+				const tts = session.deps.tts as {
+					id?: string;
+					setNotify?: (fn: (message: string, level?: "info" | "warning" | "error") => void) => void;
+				};
+				tts.setNotify?.((message, level) => {
+					session.deps.notify?.(message, level ?? "info");
+				});
+				return {
+					ttsId: tts.id,
+					sttKind: resolved.sttKind,
+					pcmSupported: pipewireFloat32PlaybackSupported(),
+				};
+			},
+		};
 	};
 
 	const ensureAutomaticFirstRun = (ctx: VoiceHostCommandContext): Promise<void> => {
@@ -314,21 +529,7 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 		if (firstRunDone) return Promise.resolve();
 		if (firstRunPromise) return firstRunPromise;
 		firstRunPromise = (async () => {
-			const uiConfirm = (ctx.ui as unknown as {
-				confirm?: (t: string, m: string) => Promise<boolean>;
-			}).confirm;
-			const snap = await runFirstRunPreparation({
-				notify: (message, level) => {
-					try {
-						ctx.ui.notify(message, level ?? "info");
-					} catch {
-						/* ignore */
-					}
-				},
-				...(typeof uiConfirm === "function"
-					? { confirm: (title: string, message: string) => uiConfirm(title, message) }
-					: {}),
-			});
+			const snap = await runFirstRunPreparation(preparationHost(ctx));
 			firstRunDone = true;
 			if (snap.status === "ready" || snap.status === "partial") {
 				rebindAdaptersFromRuntime();
@@ -347,12 +548,45 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 		return firstRunPromise;
 	};
 
+	let narrationHost: NarrationModelHost | undefined;
+	const narrationAdapter = createVoiceNarrationAdapter({
+		config: voiceAiRuntimeFromConfig(config),
+		// session is assigned just below; fall back to bootstrap config during init.
+		getConfig: () =>
+			voiceAiRuntimeFromConfig(session?.config ?? config),
+		getHost: () => narrationHost,
+		hostKind: () => resolveGentleVoiceStorage().hostKind,
+		onNotice: (message) => {
+			try {
+				lastCtx?.ui.notify(message, "info");
+			} catch {
+				/* ignore */
+			}
+		},
+	});
+
 	session = options.session ?? new VoiceSession({
 		config,
 		capture: adapters.capture,
 		stt: adapters.stt,
 		tts: adapters.tts,
 		playback: adapters.playback,
+		narrationAdapter,
+		sessionId: () => {
+			try {
+				return lastCtx?.sessionManager?.getSessionId?.()
+					?? (lastCtx?.sessionManager as { sessionId?: string } | undefined)?.sessionId;
+			} catch {
+				return undefined;
+			}
+		},
+		activeModel: () => {
+			const m = lastCtx?.model as { provider?: string; id?: string } | undefined;
+			if (!m?.id) return undefined;
+			return { id: m.id, ...(m.provider ? { provider: m.provider } : {}) };
+		},
+		activeThinking: () => lastCtx?.thinkingLevel,
+		bargeInEnabled: () => bargeActivation(session.config.behavior.fluentConversation).enabled,
 		submitTranscript: (text) => {
 			replyTracker.markVoiceSubmit(randomUUID());
 			pi.sendUserMessage?.(text);
@@ -364,6 +598,13 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 		onSpeakFinished: () => {
 			// Muted: still re-listen. Echo settle lives inside scheduleFluentRelisten.
 			session.scheduleFluentRelisten();
+		},
+		onTranscriptSubmitted: () => {
+			// Overlap VV CUDA load with agent LLM — keeps first speak off the critical path.
+			const tts = session.deps.tts as { prewarm?: () => Promise<void>; id?: string };
+			if (tts.id === "vibevoice" && typeof tts.prewarm === "function") {
+				void tts.prewarm().catch(() => {});
+			}
 		},
 		onChromeUpdate: () => {
 			if (lastCtx) updateChrome(lastCtx, session);
@@ -380,7 +621,29 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 			}
 		},
 	});
+
+	const bindNarrationHost = (ctx: VoiceHostCommandContext | undefined): void => {
+		if (!ctx?.modelRegistry) return;
+		const registryHost = createModelRegistryHost(ctx.modelRegistry);
+		if (!registryHost) return;
+		// Registry miss falls back to the live context model, read at call time
+		// so a Pi model switch is not stuck on the model from session start.
+		narrationHost = {
+			find: (provider, modelId) => {
+				const found = registryHost.find(provider, modelId);
+				if (found) return found;
+				const live = lastCtx?.model;
+				if (!live?.id || live.id !== modelId) return undefined;
+				if (provider && live.provider && live.provider !== provider) return undefined;
+				return live;
+			},
+			hasConfiguredAuth: registryHost.hasConfiguredAuth,
+			complete: (model, context, options) => registryHost.complete(model, context, options),
+		};
+	};
 	attachVad();
+	applyVoiceAiActivation(session, session.config.behavior.fluentConversation);
+	prewarmVibeVoiceIfSelected();
 	// Injected sessions (tests) still need live chrome refresh during PCM/TTS.
 	session.deps.onChromeUpdate = () => {
 		if (lastCtx) updateChrome(lastCtx, session);
@@ -392,6 +655,12 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 			/* ignore */
 		}
 	};
+	const bridgeTts = session.deps.tts as {
+		setNotify?: (fn: (message: string, level?: "info" | "warning" | "error") => void) => void;
+	};
+	bridgeTts.setNotify?.((message, level) => {
+		session.deps.notify?.(message, level ?? "info");
+	});
 	session.deps.presentTranscript = async (text) => {
 		if (!lastCtx) return;
 		const corr = session.lastCorrection;
@@ -407,6 +676,9 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 		session.endEditHold();
 		// Correlate this voice turn with turn_end/agent_end — agent_settled has no message.
 		replyTracker.markVoiceSubmit(randomUUID());
+		// Extension sendUserMessage skips Pi's Enter → addToHistory; push so Up works.
+		editorHistory.tryBind(lastCtx);
+		editorHistory.push(text);
 		pi.sendUserMessage?.(text);
 		// Fluent: one short line (no review spam). Dictation/manual still quiet.
 		if (lastCtx && !session.config.behavior.fluentConversation) {
@@ -444,15 +716,16 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 			}
 
 			if (fluent) {
+				// Cancel audio first; do not block Space on long TTS teardown.
 				if (session.state.phase === "awaiting_agent") {
 					endConversationSession(session);
-					await session.flush();
+					void session.flush();
 					lastCtx.ui.notify("Conversation ended — agent continues; mic/TTS stopped.", "info");
 					updateChrome(lastCtx, session);
 					return;
 				}
 				endConversationSession(session);
-				await session.flush();
+				void session.flush();
 				lastCtx.ui.notify("Conversation OFF.", "info");
 				updateChrome(lastCtx, session);
 				return;
@@ -504,15 +777,14 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 
 	// Esc coordination via raw terminal input — only when voice is busy.
 	// Does not register a global Esc shortcut (preserves menus/editor when idle).
+	// Arrow keys are CSI (\x1b[A) — must NOT be treated as Esc (isLoneEscape).
 	const attachEscape = (ctx: VoiceHostCommandContext) => {
+		editorHistory.tryBind(ctx);
 		if (typeof ctx.ui.onTerminalInput !== "function") return;
 		if ((attachEscape as { done?: boolean }).done) return;
 		(attachEscape as { done?: boolean }).done = true;
 		ctx.ui.onTerminalInput((data) => {
-			// ESC / CSI sequences start with 0x1b
-			if (!data || data.charCodeAt(0) !== 0x1b) return;
-			// Lone Esc (not CSI arrow/fn): length 1 or Esc Esc
-			if (data.length > 1 && data[1] !== "\x1b") return;
+			if (!isLoneEscape(data)) return;
 			if (!lastCtx) lastCtx = ctx;
 			return handleVoiceEscape(lastCtx, session);
 		});
@@ -523,15 +795,246 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 		handler: async (args, ctx) => {
 			lastCtx = ctx;
 			attachEscape(ctx);
-			await ensureAutomaticFirstRun(ctx);
 			const parsed = parseVoiceArgs(args);
 			if (parsed.error) {
 				ctx.ui.notify(parsed.error, "warning");
 				return;
 			}
+			if (parsed.command === "vibevoice-setup" && parsed.rest.trim() === "cancel") {
+				ctx.ui.notify(
+					cancelVibeVoiceInstall() ? "Installation cancelled." : "No VibeVoice installation is running.",
+					"warning",
+				);
+				return;
+			}
+			const installNow = vibeVoiceInstallSnapshot();
+			if (installNow.running && parsed.command === "vibevoice-setup" && parsed.rest.trim() !== "plan") {
+				ctx.ui.notify(
+					`${installNow.message}\nVibeVoice installation is already running. /gentle:voice vibevoice-setup cancel stops it.`,
+					"info",
+				);
+				return;
+			}
+			if (!commandSkipsInstallWait(parsed.command, parsed.rest)) {
+				await ensureAutomaticFirstRun(ctx);
+			}
 
 			if (parsed.command === "edit") {
 				await runVoiceEdit(ctx, session);
+				return;
+			}
+
+			if (parsed.command === "stream") {
+				const voiceHome = voiceHomeForPlayback();
+				const arg = parsed.rest.trim().toLowerCase();
+				const choice = resolveVibeVoicePlayback({
+					env: process.env,
+					preference: readVibeVoicePlaybackPreference(voiceHome),
+					pcmSupported: pipewireFloat32PlaybackSupported(),
+				});
+				if (arg === "" || arg === "status") {
+					ctx.ui.notify(
+						[
+							"Gentle Voice — VibeVoice playback",
+							`Preference    ${choice.preference}`,
+							`Active        ${choice.mode} (${choice.source})`,
+							choice.fallbackReason
+								? "PCM unsupported on this host; using WAV for VibeVoice."
+								: "PCM is the default when pw-play supports float32.",
+							"WAV: /gentle:voice stream wav",
+							"PCM: /gentle:voice stream pcm   auto: /gentle:voice stream auto",
+							"This process: GENTLE_VOICE_VIBEVOICE_NATIVE_STREAM=0 forces WAV (overrides the file).",
+							"Does not change Piper vs VibeVoice. Engine: /gentle:voice tts (lab) or GENTLE_VOICE_TTS.",
+						].join("\n"),
+						"info",
+					);
+					return;
+				}
+				if (arg !== "auto" && arg !== "pcm" && arg !== "wav") {
+					ctx.ui.notify("Usage: /gentle:voice stream auto|pcm|wav|status", "warning");
+					return;
+				}
+				writeVibeVoicePlaybackPreference(voiceHome, arg as VibeVoicePlaybackPreference);
+				const next = resolveVibeVoicePlayback({
+					env: process.env,
+					preference: arg as VibeVoicePlaybackPreference,
+					pcmSupported: pipewireFloat32PlaybackSupported(),
+				});
+				ctx.ui.notify(
+					next.fallbackReason
+						? `Saved ${arg}. This host cannot play float32 PCM, so VibeVoice stays on WAV.`
+						: `VibeVoice playback ${next.mode} (${next.source}). Piper is unchanged.`,
+					"info",
+				);
+				return;
+			}
+
+			if (parsed.labCommand === "converse-style") {
+				if (!isGentleVoiceLabMode()) {
+					ctx.ui.notify("Unknown subcommand \"converse-style\".", "warning");
+					return;
+				}
+				const voiceHome = resolveVoiceHomeForStyle();
+				const arg = parsed.rest.trim().toLowerCase();
+				if (arg === "status" || arg === "") {
+					const st = readConverseStyleState(voiceHome);
+					ctx.ui.notify(
+						[
+							`converse-style=${st.enabled ? "on" : "off"}`,
+							`updatedAt=${st.updatedAt}`,
+							"Does NOT change model — use /gentle:profiles for voice-ai (MiMo).",
+							"When on: injects session style via before_agent_start (1 LLM/turn).",
+						].join("\n"),
+						"info",
+					);
+					return;
+				}
+				const on = arg === "on" || arg === "1" || arg === "true";
+				const off = arg === "off" || arg === "0" || arg === "false";
+				if (!on && !off) {
+					ctx.ui.notify("Usage: /gentle:voice converse-style on|off|status", "warning");
+					return;
+				}
+				const st = writeConverseStyleState(voiceHome, on);
+				ctx.ui.notify(
+					on
+						? "converse-style ON — next agent turns use conversational Spanish (same model). Model unchanged."
+						: "converse-style OFF — habitual agent style restored. History kept. Model unchanged.",
+					"info",
+				);
+				if (labDiagEnabled()) {
+					ctx.ui.notify(`voice-diag: converse-style=${st.enabled} at=${st.updatedAt}`, "info");
+				}
+				return;
+			}
+
+			if (parsed.command === "voice-ai") {
+				bindNarrationHost(ctx);
+				const arg = parsed.rest.trim().toLowerCase();
+				if (arg === "status" || arg === "") {
+					const d = session.narrationDiagnostics() ?? narrationAdapter.lastDiagnostics();
+					const activation = applyVoiceAiActivation(
+						session,
+						session.config.behavior.fluentConversation,
+					);
+					const thinking = session.deps.activeThinking?.() as
+						| import("../lib/narration/types.ts").NarrationThinkingLevel
+						| undefined;
+					const res = narrationAdapter.inspectNarrator({
+						sessionId: session.deps.sessionId?.(),
+						activeModel: session.deps.activeModel?.(),
+						activeThinking: thinking,
+					});
+					const liveOrch = ctx.model
+						? `${ctx.model.provider ? `${ctx.model.provider}/` : ""}${ctx.model.id ?? "?"}`
+						: "(unknown)";
+					const profileOrch =
+						"orchestratorRef" in res && res.orchestratorRef
+							? res.orchestratorRef
+							: liveOrch;
+					const timing = session.lastVoiceTiming();
+					ctx.ui.notify(
+						formatVoiceAiStatus({
+							hostKind: resolveGentleVoiceStorage().hostKind,
+							enabled: activation.enabled,
+							activationSource: activation.source,
+							streaming: session.config.voiceAi.streaming,
+							resolution: res,
+							orchestratorLabel: profileOrch,
+							diagnostics: d,
+							...(timing.narrationMs !== undefined ? { narrationMs: timing.narrationMs } : {}),
+							...(timing.synthToPlaybackMs !== undefined
+								? { synthToPlaybackMs: timing.synthToPlaybackMs }
+								: {}),
+						}),
+						"info",
+					);
+					return;
+				}
+				const on = arg === "on" || arg === "1" || arg === "true";
+				const off = arg === "off" || arg === "0" || arg === "false";
+				if (!on && !off) {
+					ctx.ui.notify("Usage: /gentle:voice voice-ai on|off|status", "warning");
+					return;
+				}
+				writeVoiceAiPreference(resolveVoiceHomeForPreference(), on ? "on" : "off");
+				applyVoiceAiActivation(session, session.config.behavior.fluentConversation);
+				ctx.ui.notify(
+					on
+						? "Voice AI ON — after the final reply, a second call prepares the narration. The written text stays."
+						: "Voice AI OFF — Speech Renderer + Streaming TTS of orchestrator text (no second LLM).",
+					"info",
+				);
+				return;
+			}
+
+			if (parsed.command === "barge-in") {
+				const arg = parsed.rest.trim().toLowerCase();
+				if (arg === "status" || arg === "") {
+					const activation = bargeActivation(session.config.behavior.fluentConversation);
+					const trace = session.bargeTrace();
+					ctx.ui.notify(
+						[
+							"Gentle Voice — barge-in",
+							`Enabled       ${activation.enabled ? "on" : "off"}`,
+							`Activation    ${activation.source}`,
+							`Preference    ${activation.preference}`,
+							"Scope         playback while phase=speaking (not during tools)",
+							"Echo          mic-floor gate, not AEC",
+							"Orchestrator  not aborted",
+							"Esc           still cancels audio",
+							...(trace.length > 0 ? ["Trace:"] : []),
+							...trace,
+						].join("\n"),
+						"info",
+					);
+					return;
+				}
+				const on = arg === "on" || arg === "1" || arg === "true";
+				const off = arg === "off" || arg === "0" || arg === "false";
+				if (!on && !off) {
+					ctx.ui.notify("Usage: /gentle:voice barge-in on|off|status", "warning");
+					return;
+				}
+				writeBargePreference(resolveVoiceHomeForBarge(), on ? "on" : "off");
+				const activation = bargeActivation(session.config.behavior.fluentConversation);
+				ctx.ui.notify(
+					on
+						? `Barge-in explicit on (${activation.source}). El monitor solo abre el mic mientras hay reproducción. No es cancelación de eco.`
+						: "Barge-in explicit off. Ctrl+Alt+Space y converse on no lo vuelven a encender.",
+					"info",
+				);
+				return;
+			}
+
+			if (parsed.labCommand === "voice-ai-profile") {
+				if (!isGentleVoiceLabMode()) {
+					ctx.ui.notify("Unknown subcommand \"voice-ai-profile\".", "warning");
+					return;
+				}
+				const lab = await import("../lib/lab/voice-ai-profile.ts").catch(() => undefined);
+				if (!lab) {
+					ctx.ui.notify("voice-ai-profile is a lab helper and is not in this package.", "warning");
+					return;
+				}
+				const result = lab.ensureVoiceAiProfile();
+				if (result.refused) {
+					ctx.ui.notify(`voice-ai-profile refused: ${result.reason}`, "warning");
+					return;
+				}
+				ctx.ui.notify(
+					[
+						`host=${result.hostProfile}`,
+						`role=${lab.VOICE_AI_ROLE_NAME}`,
+						`model=${result.model}`,
+						`thinking=${result.thinking}`,
+						`path=${result.path}`,
+						`created=${result.created} updated=${result.updated} removedTopLevel=${result.removedTopLevelProfile}`,
+						"voice-ai is a ROLE under OpenSource → Profile routing (like review-risk).",
+						"Primary chat still uses OpenSource orchestrator. Voice AI uses this role for TTS narration only.",
+					].join("\n"),
+					"info",
+				);
 				return;
 			}
 
@@ -565,15 +1068,70 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 				return;
 			}
 
-			if (parsed.labCommand === "tts") {
-				if (!isGentleVoiceLabMode()) {
-					ctx.ui.notify("Unknown subcommand \"tts\".", "warning");
+			if (parsed.command === "vibevoice-setup") {
+				const targetDir = resolveVibeVoiceHome();
+				const voiceHome = resolveVoiceHomeForTts();
+				const hardware = probeVibeVoiceHardware(targetDir);
+				const alreadyInstalled = isVibeVoiceReady();
+				const plan = planVibeVoiceInstall({
+					targetDir,
+					hardware,
+					alreadyInstalled,
+					allowTmpfs: process.env.GENTLE_VOICE_VIBEVOICE_ALLOW_TMPFS === "1",
+				});
+				if (parsed.rest.trim() === "plan") {
+					const phase = vibeVoiceInstallSnapshot();
+					const prefix = phase.running ? `${phase.message}\n\n` : "";
+					ctx.ui.notify(`${prefix}${formatVibeVoiceInstallPlan(plan)}`, plan.status === "blocked" ? "warning" : "info");
 					return;
 				}
+				if (vibeVoiceInstallSnapshot().running) {
+					ctx.ui.notify(vibeVoiceInstallSnapshot().message, "info");
+					return;
+				}
+				const uiConfirm = (ctx.ui as unknown as { confirm?: (t: string, m: string) => Promise<boolean> }).confirm;
+				let consent: boolean | undefined;
+				if (alreadyInstalled) consent = true;
+				else if (plan.status === "blocked") consent = false;
+				else if (typeof uiConfirm === "function") {
+					consent = await uiConfirm("Install VibeVoice?", formatVibeVoiceConsent(plan));
+				}
+				const networkLock = process.env.GENTLE_VOICE_VIBEVOICE_ALLOW_NETWORK;
+				const allowNetwork = networkLock === "0" ? false : consent === true || networkLock === "1";
+				if (consent === true && allowNetwork) {
+					await driveVibeVoiceInstall(preparationHost(ctx), {
+						targetDir,
+						voiceHome,
+						hardware,
+						alreadyInstalled,
+						consent,
+						allowNetwork,
+						allowTmpfs: process.env.GENTLE_VOICE_VIBEVOICE_ALLOW_TMPFS === "1",
+						io: createNetworkOnboardingIo(),
+					});
+					return;
+				}
+				const result = await beginVibeVoiceInstall({
+					targetDir,
+					voiceHome,
+					hardware,
+					alreadyInstalled,
+					consent,
+					allowNetwork,
+					allowTmpfs: process.env.GENTLE_VOICE_VIBEVOICE_ALLOW_TMPFS === "1",
+				});
+				ctx.ui.notify(
+					result.status === "cancelled" ? "Installation cancelled." : result.reason,
+					"warning",
+				);
+				return;
+			}
+
+			if (parsed.command === "tts") {
 				const eng = parsed.rest.trim().toLowerCase();
-				if (eng !== "piper" && eng !== "kokoro") {
+				if (eng !== "piper" && eng !== "kokoro" && eng !== "vibevoice") {
 					ctx.ui.notify(
-						`Usage: /gentle:voice tts piper|kokoro\nactive=${resolved.ttsKind} kokoroReady=${resolved.kokoroReady}`,
+						`Usage: /gentle:voice tts piper|kokoro|vibevoice\nactive=${resolved.ttsKind} kokoroReady=${resolved.kokoroReady} vibevoiceReady=${resolved.vibevoiceReady}`,
 						"warning",
 					);
 					return;
@@ -591,13 +1149,45 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 						"TTS engine → kokoro (session). Applies to agent spoken replies and test-speak. Default install remains Piper until you switch.",
 						"info",
 					);
+				} else if (eng === "vibevoice") {
+					if (!resolved.vibevoiceAdapter) {
+						ctx.ui.notify(
+							`VibeVoice unavailable (${probeVibeVoiceReadiness().reason}). Piper still works. Set GENTLE_VOICE_VIBEVOICE_HOME to an engine directory you installed yourself. See docs/vibevoice-tts.md.`,
+							"warning",
+						);
+						return;
+					}
+					writeTtsEnginePreference(resolveVoiceHomeForTts(), "vibevoice");
+					if (
+						resolveVibeVoiceOnColdStart() === "piper"
+						&& resolved.piperAdapter
+					) {
+						session.deps.tts = createVibeVoicePiperBridge({
+							vibevoice: resolved.vibevoiceAdapter as VibeVoiceTtsAdapter,
+							piper: resolved.piperAdapter,
+							notify: (m, l) => ctx.ui.notify(m, l ?? "info"),
+						});
+						ctx.ui.notify(
+							"TTS → vibevoice (lab). onColdStart=piper: Piper en frío, VV después.",
+							"info",
+						);
+					} else {
+						session.deps.tts = resolved.vibevoiceAdapter;
+						ctx.ui.notify(
+							"TTS → vibevoice. PCM when pw-play supports float32. Voice sp-Spk0_woman.",
+							"info",
+						);
+					}
 				} else {
 					if (!resolved.piperAdapter) {
 						ctx.ui.notify("Piper not available.", "warning");
 						return;
 					}
+					const vv = resolved.vibevoiceAdapter as { dispose?: () => Promise<void> } | undefined;
+					void vv?.dispose?.();
 					session.deps.tts = resolved.piperAdapter;
-					ctx.ui.notify("TTS engine → piper (session). Applies to agent spoken replies and test-speak.", "info");
+					writeTtsEnginePreference(resolveVoiceHomeForTts(), "piper");
+					ctx.ui.notify("TTS engine → piper. VibeVoice worker stopped (VRAM freed).", "info");
 				}
 				updateChrome(ctx, session);
 				return;
@@ -617,17 +1207,20 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 				}
 				if (!Number.isInteger(phraseIndex) || phraseIndex < 0 || phraseIndex >= AB_COMPARE_PHRASES.length) {
 					ctx.ui.notify(
-						`Usage: /gentle:voice ab-compare [0-${AB_COMPARE_PHRASES.length - 1}] [piper|kokoro]\nPhrases:\n${
+						`Usage: /gentle:voice ab-compare [0-${AB_COMPARE_PHRASES.length - 1}] [piper|kokoro|vibevoice]\nPhrases:\n${
 							AB_COMPARE_PHRASES.map((p, i) => `  ${i}: ${p}`).join("\n")
 						}`,
 						"warning",
 					);
 					return;
 				}
-				if (engineHint === "kokoro" || engineHint === "piper") {
+				if (engineHint === "kokoro" || engineHint === "piper" || engineHint === "vibevoice") {
 					if (engineHint === "kokoro" && resolved.kokoroAdapter) session.deps.tts = resolved.kokoroAdapter;
-					else if (engineHint === "piper" && resolved.piperAdapter) session.deps.tts = resolved.piperAdapter;
-					else {
+					else if (engineHint === "vibevoice" && resolved.vibevoiceAdapter) {
+						session.deps.tts = resolved.vibevoiceAdapter;
+					} else if (engineHint === "piper" && resolved.piperAdapter) {
+						session.deps.tts = resolved.piperAdapter;
+					} else {
 						ctx.ui.notify(`Engine "${engineHint}" not installed.`, "warning");
 						return;
 					}
@@ -653,14 +1246,30 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 						adapter: resolved.kokoroAdapter,
 					});
 				}
+				if (resolved.vibevoiceAdapter) {
+					candidateSlots.push({
+						info: {
+							id: "vibevoice-sp-Spk0_woman",
+							displayName: "VibeVoice Realtime 0.5B sp-Spk0_woman (ES experimental)",
+							engine: "vibevoice" as const,
+							platforms: ["linux"] as const,
+							verifiedLocally: true,
+							licenseHint: "MIT (research)",
+							notes: "Keep-alive worker. PCM when float32 playback works; WAV on request.",
+						},
+						adapter: resolved.vibevoiceAdapter,
+					});
+				}
 				const installed = await listInstalledTtsSlots(candidateSlots);
 				if (installed.length === 0) {
 					ctx.ui.notify("No installed TTS ready for A/B.", "warning");
 					return;
 				}
-				const activeId = session.deps.tts.id.includes("kokoro")
-					? "kokoro-ef-dora"
-					: "piper-es-AR-daniela-high";
+				const activeId = session.deps.tts.id.includes("vibevoice")
+					? "vibevoice-sp-Spk0_woman"
+					: session.deps.tts.id.includes("kokoro")
+						? "kokoro-ef-dora"
+						: "piper-es-AR-daniela-high";
 				const slot = installed.find((s) => s.info.id === activeId) ?? installed[0]!;
 				if (!abSession) {
 					abSession = createAbCompareSession(installed, slot.info.id);
@@ -688,7 +1297,7 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 					displayName: slot.info.displayName,
 					synthesizeMs,
 					audioBytes: 0,
-					sampleRateHz: slot.info.engine === "kokoro" ? 24_000 : 22_050,
+					sampleRateHz: slot.info.engine === "piper" ? 22_050 : 24_000,
 					...(outcome !== "played" ? { error: outcome } : {}),
 				};
 				abSession = {
@@ -814,6 +1423,13 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 					const arg = parsed.rest.trim().toLowerCase();
 					const on = arg === "on" || arg === "1" || arg === "true";
 					const off = arg === "off" || arg === "0" || arg === "false";
+					if (!arg) {
+						ctx.ui.notify(
+							`Conversation is ${session.config.behavior.fluentConversation ? "ON" : "OFF"}.`,
+							"info",
+						);
+						break;
+					}
 					if (!on && !off) {
 						ctx.ui.notify("Usage: /gentle:voice converse on|off", "warning");
 						break;
@@ -824,11 +1440,15 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 					} else {
 						endConversationSession(session);
 					}
+					const silero = on ? await planSileroInstall() : undefined;
+					const degraded = silero && silero.status !== "ready"
+						? " Silero is not active, so conversation uses the energy fallback."
+						: "";
 					ctx.ui.notify(
 						on
-							? `Conversation ON (autoSubmit=${session.config.behavior.autoSubmitTranscript}). VAD ends utterances. Ctrl+Alt+Space ends session.`
+							? `Conversation ON (autoSubmit=${session.config.behavior.autoSubmitTranscript}). VAD ends utterances. Ctrl+Alt+Space ends session.${degraded}`
 							: "Conversation OFF — dictation/manual listen/stop/send.",
-						"info",
+						silero && silero.status !== "ready" ? "warning" : "info",
 					);
 					break;
 				}
@@ -873,6 +1493,7 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 					break;
 				}
 				case "status": {
+					const install = vibeVoiceInstallSnapshot();
 					const probe = await probeAdapterBundle(adapters);
 					const setup = await beginSetup({
 						probe: options.engineProbe ?? createFilesystemEngineProbe(),
@@ -886,7 +1507,19 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 						&& probe.stt === "ready"
 						&& probe.tts === "ready"
 						&& probe.playback === "ready";
+					const sileroPlan = await planSileroInstall();
+					const capabilities = readCapabilities();
+					const nd = session.narrationDiagnostics() ?? narrationAdapter.lastDiagnostics();
+					const narratorNow = narrationAdapter.inspectNarrator({
+						sessionId: session.deps.sessionId?.(),
+						activeModel: session.deps.activeModel?.(),
+						activeThinking: session.deps.activeThinking?.() as
+							| import("../lib/narration/types.ts").NarrationThinkingLevel
+							| undefined,
+					});
 					const lines = [
+						install.running ? `vibevoice.install=${install.phase} ${install.message}` : "vibevoice.install=idle",
+						...(install.steps.length > 0 ? formatInstallView(install.steps) : []),
 						session.statusLine(),
 						`hostKind=${storage.hostKind}`,
 						`storageRoot=${storage.storageRoot}`,
@@ -896,16 +1529,43 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 						`engines.tts=${probe.tts}`,
 						`engines.playback=${probe.playback}`,
 						`conversationCapable=${conversationCapable}`,
+						...describeConversationReadiness({
+							tts: probe.tts,
+							stt: probe.stt,
+							capture: probe.capture,
+							playback: probe.playback,
+							silero: sileroPlan.status,
+							vadBackend: lastVadStatus,
+						}),
+						...(capabilities ? formatCapabilities(capabilities) : []),
 						`conversationActive=${session.config.behavior.fluentConversation}`,
 						`mode=${session.config.behavior.mode}`,
 						`autoSubmitEffective=${session.config.behavior.autoSubmitTranscript}`,
 						`autoSubmitDisabledEnv=${process.env.GENTLE_VOICE_DISABLE_AUTO_SUBMIT === "1"}`,
+						`voiceAi.enabled=${session.config.voiceAi.enabled}`,
+						`voiceAi.role=${session.config.voiceAi.role}`,
+						`voiceAi.streaming=${session.config.voiceAi.streaming}`,
+						`voiceAi.narrator=${nd.narratorRef ?? "(none yet)"}`,
+						`voiceAi.source=${nd.narratorSource ?? "(none)"}`,
+						`voiceAi.profileOrigin=${("profileOrigin" in narratorNow && narratorNow.profileOrigin) || "(none)"}`,
+						`voiceAi.note=${("note" in narratorNow && narratorNow.note) || "(none)"}`,
+						`vad=${lastVadStatus}`,
+						`voiceAi.lastPath=${nd.lastPath ?? "(none)"}`,
 						`tts.selected=${selected}`,
 						`tts.activeAdapter=${activeId}`,
 						`tts.lastSynthesize=${lastSynth}`,
 						`tts.fallbackReason=${session.lastTtsFallbackReason || "(none)"}`,
-						`tts.voiceHint=${activeId.includes("kokoro") ? "kokoro/ef_dora" : activeId.includes("piper") ? "piper/daniela-high" : activeId}`,
+						`tts.voiceHint=${
+							activeId.includes("vibevoice")
+								? "vibevoice/sp-Spk0_woman"
+								: activeId.includes("kokoro")
+									? "kokoro/ef_dora"
+									: activeId.includes("piper")
+										? "piper/daniela-high"
+										: activeId
+						}`,
 						`kokoroLabReady=${resolved.kokoroReady}`,
+						`vibevoiceReady=${resolved.vibevoiceReady}`,
 						`engines.scenario=${setup.report.scenario}`,
 						`shortcut.space.registered=${spaceShortcutRegistered}`,
 						`shortcut.space.reason=${spaceShortcutReason}`,
@@ -970,21 +1630,7 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 					break;
 				}
 				case "setup": {
-					const uiConfirm = (ctx.ui as unknown as { confirm?: (t: string, m: string) => Promise<boolean> }).confirm;
-					const snap = await runFirstRunPreparation({
-						notify: (message, level) => {
-							try {
-								ctx.ui.notify(message, level ?? "info");
-							} catch {
-								/* ignore */
-							}
-						},
-						...(typeof uiConfirm === "function"
-							? {
-								confirm: (title: string, message: string) => uiConfirm(title, message),
-							}
-							: {}),
-					});
+					const snap = await runFirstRunPreparation(preparationHost(ctx));
 					ctx.ui.notify(
 						[
 							`setup.status=${snap.status}`,
@@ -1014,15 +1660,28 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 	// Pi 1.2 lifecycle: message lives on turn_end / agent_end; agent_settled is {aborted} only.
 	// Streaming: message_update.assistantMessageEvent.text_delta (confirmed in Pi/GS protocol).
 	if (typeof pi.on === "function") {
+		// Conversational style: same model, appendSystemPrompt only (no second LLM).
+		pi.on("before_agent_start", (event) => {
+			if (!isGentleVoiceLabMode()) return;
+			const voiceHome = resolveVoiceHomeForStyle();
+			const enabled = readConverseStyleState(voiceHome).enabled;
+			const opts = (event as { systemPromptOptions?: { appendSystemPrompt?: string } | null })
+				?.systemPromptOptions;
+			injectConverseStyleIfEnabled(opts ?? undefined, enabled);
+		});
 		// First-run on host session start — no mandatory /gentle:voice setup.
 		pi.on("session_start", (_event, ctx) => {
 			lastCtx = ctx as VoiceHostCommandContext;
+			bindNarrationHost(lastCtx);
 			attachEscape(lastCtx);
+			const duplicate = readDuplicateVoiceWarning();
+			if (duplicate) lastCtx.ui.notify(duplicate, "warning");
 			void ensureAutomaticFirstRun(lastCtx);
 			updateChrome(lastCtx, session);
 		});
 		pi.on("agent_start", (_event, ctx) => {
 			lastCtx = ctx as VoiceHostCommandContext;
+			bindNarrationHost(lastCtx);
 			attachEscape(lastCtx);
 			void ensureAutomaticFirstRun(lastCtx);
 			if (!session.state.enabled) return;
@@ -1055,6 +1714,7 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 		});
 		pi.on("agent_settled", (event, ctx) => {
 			lastCtx = ctx as VoiceHostCommandContext;
+			bindNarrationHost(lastCtx);
 			if (!session.state.enabled) return;
 			const aborted = Boolean((event as { aborted?: boolean })?.aborted);
 			const entries = lastCtx.sessionManager?.getEntries?.();
@@ -1095,8 +1755,15 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 			}
 			void session.flush().then(() => updateChrome(lastCtx!, session));
 		});
+		pi.on("ui_prompt_start", (event) => {
+			const decision = classifyUiPrompt(event);
+			if (!decision.speak || !session.config.behavior.fluentConversation) return;
+			void session.playSideNotice(decision.text);
+		});
 		pi.on("session_shutdown", () => {
 			session.dispose();
+			const vv = resolved.vibevoiceAdapter as { dispose?: () => Promise<void> } | undefined;
+			void vv?.dispose?.();
 		});
 	}
 

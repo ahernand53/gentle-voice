@@ -5,12 +5,15 @@
 
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { truncateSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { sha256Buffer, checksumMatches } from "../lib/runtime/checksum.ts";
 import { resolveRuntimeLayout } from "../lib/runtime/paths.ts";
 import { buildFirstRunPlan, verifyArtifactFile } from "../lib/runtime/first-run.ts";
+import { VIBEVOICE_MODEL_SAFETENSORS_BYTES } from "../lib/adapters/vibevoice-tts.ts";
+import { writeTtsEnginePreference } from "../lib/vibevoice/tts-preference.ts";
 import { formatCompatMarkdown, COMPAT_MATRIX } from "../lib/runtime/compat-matrix.ts";
 import { artifactsFor, detectArch } from "../lib/runtime/artifacts.ts";
 import { parseVoiceArgs } from "../lib/commands.ts";
@@ -77,6 +80,45 @@ test("3.1 first-run: isolated home reports needs_consent when artifacts missing"
 	assert.ok(plan.missing.length > 0);
 	assert.equal(plan.status, "needs_consent");
 	assert.ok(plan.estimatedDownloadBytes > 0);
+});
+
+test("3.1 a ready VibeVoice engine does not ask to download Piper", async () => {
+	const root = await mkdtemp(join(tmpdir(), "gv-vv-ready-"));
+	const engine = join(root, "vibevoice");
+	const model = join(engine, "models", "VibeVoice-Realtime-0.5B");
+	await mkdir(model, { recursive: true });
+	await mkdir(join(engine, ".venv", "bin"), { recursive: true });
+	await mkdir(join(engine, "voices"), { recursive: true });
+	const weights = join(model, "model.safetensors");
+	await writeFile(weights, "");
+	truncateSync(weights, VIBEVOICE_MODEL_SAFETENSORS_BYTES);
+	await writeFile(join(model, "config.json"), "{}");
+	await writeFile(join(model, "preprocessor_config.json"), "{}");
+	await writeFile(join(engine, ".venv", "bin", "python"), "");
+	await writeFile(join(engine, "voices", "sp-Spk0_woman.pt"), "voice");
+	await writeFile(join(engine, "INSTALL_PENDING.json"), JSON.stringify({ authorized: true, status: "installed" }));
+	writeTtsEnginePreference(root, "vibevoice");
+	for (const relative of [
+		process.platform === "win32" ? "bin/whisper-cli.exe" : "bin/whisper-cli",
+		"models/whisper/ggml-base-q5_1.bin",
+	]) {
+		const path = join(root, relative);
+		await mkdir(join(path, ".."), { recursive: true });
+		await writeFile(path, "present");
+	}
+	const plan = await buildFirstRunPlan({
+		GENTLE_VOICE_HOME: root,
+		GENTLE_VOICE_VIBEVOICE_HOME: engine,
+		HOME: root,
+	});
+	if (process.platform === "darwin") {
+		assert.equal(plan.status, "partial");
+		assert.match(plan.summary, /macOS/);
+	} else {
+		assert.equal(plan.status, "ready");
+	}
+	assert.equal(plan.missing.some((art) => art.id.startsWith("piper")), false);
+	assert.equal(plan.summary.includes("Ready to download"), false);
 });
 
 test("3 checksum helpers", async () => {

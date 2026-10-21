@@ -2,6 +2,30 @@
 
 All notable changes to Gentle Voice are documented here.
 
+## [0.1.5] — unreleased
+
+Prepared, not published. npm `latest` remains `0.1.4` until publication is explicitly approved. The same package is installed with `pi install npm:gentle-voice` or `gentle-shell install npm:gentle-voice`.
+
+### Added
+
+- VibeVoice Realtime 0.5B as an optional engine, with a short consent dialog, private `.venv`, pinned hashes, and `sp-Spk0_woman` taken from the code archive.
+- Persistent engine directory under the XDG data home. A tmpfs destination, including `/tmp`, is refused unless explicitly allowed.
+- Separate first-run questions for speech recognition and for Piper or VibeVoice. The selector names the engines. The recommended one is listed first because Pi highlights row 0. A failed GPU probe stays unknown. A tmpfs override is shown and is not the default destination.
+- VibeVoice install progress stays on screen as a checklist. Reused files are not shown as new downloads. The engine is activated in the current Pi session after verification. `Ready to use` is reserved for that active state. `/gentle:voice status` and `vibevoice-setup plan` do not wait for pip. `vibevoice-setup cancel` stops it. A partial tree is resumed. The receipt is written only after the pinned files, the private environment, and a worker process probe that does not load the GPU model.
+- Native PCM playback for VibeVoice when `pw-play` supports float32. `/gentle:voice stream wav` keeps WAV.
+- `/gentle:voice voice-ai`, `barge-in`, `tts`, `stream`, and `vibevoice-setup`.
+- Voice AI narrates the final assistant text through a profile role named `voice-ai`. The role is not a model. The extra call is billed separately. Invalid, failed, or timed-out narration uses a deterministic renderer.
+- Silero VAD with an energy fallback, optional incremental speech-to-text, and a small local correction lexicon.
+- First `Esc` while voice is busy cancels only the voice channel.
+
+### Notes
+
+- Piper stays the engine until a VibeVoice install is accepted and the preference is not Piper.
+- Weights, voices, and the VibeVoice tree are not in the npm tarball.
+- A clean VibeVoice install on Linux x64 was confirmed in use, including playback. Weights stay out of the npm tarball. The Spanish voice file is taken from the VibeVoice code archive, not from the weights repo.
+- Windows, macOS, CPU, and non-NVIDIA GPUs are not a tested VibeVoice path.
+- CI runs the suite on Ubuntu, macOS, and Windows. PipeWire capture and a tmpfs install refusal stay Linux behavior. macOS and Windows are still not supported audio hosts.
+
 ## [0.1.4] — 2026-10-20
 
 ### Fixed

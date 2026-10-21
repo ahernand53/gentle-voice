@@ -39,7 +39,7 @@ test("aborted runs stay silent", () => {
 	assert.equal(result.reason, "run_aborted");
 });
 
-test("prefers warnings and conclusions over arbitrary prefix", () => {
+test("keeps opening sentence and still prefers warnings/conclusions", () => {
 	const body = [
 		"I inspected several files in the repository and considered a few options along the way.",
 		"There was also a long discussion about formatting preferences that is not actionable.",
@@ -47,10 +47,11 @@ test("prefers warnings and conclusions over arbitrary prefix", () => {
 		"In summary, the login bug is fixed and tests are green.",
 	].join(" ");
 
-	const spoken = selectSpokenSentences(body, { maxSentences: 2, maxChars: 400 });
+	// maxSentences=3: opening (always) + top-ranked cues — never start mid-reply.
+	const spoken = selectSpokenSentences(body, { maxSentences: 3, maxChars: 500 });
+	assert.match(spoken, /^I inspected/i);
 	assert.match(spoken, /Warning/i);
 	assert.match(spoken, /summary|fixed|green/i);
-	assert.ok(!spoken.startsWith("I inspected several files"));
 });
 
 test("buildFinalUtterance returns ranked summary", () => {

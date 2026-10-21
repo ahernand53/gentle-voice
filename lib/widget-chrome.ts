@@ -6,6 +6,7 @@
 
 import type { VoicePhase } from "./contracts.ts";
 import type { VoiceMachineState } from "./state-machine.ts";
+import { VOICE_BRAND, VOICE_GLYPH_GAP } from "./visual/compact-widget.ts";
 import type { VisualSpeakStage } from "./visual/visual-meter.ts";
 
 /**
@@ -19,6 +20,8 @@ export type VoiceChromeActivity =
 	| "SPEECH_DETECTED"
 	| "TRANSCRIBING"
 	| "WORKING"
+	| "NARRATING"
+	| "VOICE_LOADING"
 	| "SYNTHESIZING"
 	| "SPEAKING"
 	| "MUTED"
@@ -44,6 +47,19 @@ export interface VoiceChromeVisual {
 	 * Must not display as operational LISTENING.
 	 */
 	readonly micReady?: boolean;
+	/**
+	 * Provisional (incremental) or committed transcript for chrome.
+	 * Partials must never be submitted to Pi — display only.
+	 */
+	readonly transcriptPreview?: string;
+	/**
+	 * partial = provisional ASR (prefix …)
+	 * final = committed STT (prefix ✓)
+	 * decoding = whisper busy; no stale words — neutral marker only
+	 */
+	readonly transcriptPreviewKind?: "partial" | "final" | "decoding";
+	/** Second LLM call is preparing speakable text. Written reply is already visible. */
+	readonly narrating?: boolean;
 }
 
 export function chromeActivityFromPhase(phase: VoicePhase): VoiceChromeActivity {
@@ -80,10 +96,18 @@ export function resolveChromeActivity(
 	if (state.phase === "error") return "ERROR";
 
 	const speakStage = visual?.speakStage ?? "idle";
-	if (state.phase === "speaking" || speakStage === "synthesizing" || speakStage === "speaking") {
+	if (
+		state.phase === "speaking"
+		|| speakStage === "loading_voice"
+		|| speakStage === "synthesizing"
+		|| speakStage === "speaking"
+	) {
+		if (speakStage === "loading_voice") return "VOICE_LOADING";
 		if (speakStage === "synthesizing") return "SYNTHESIZING";
 		if (speakStage === "speaking" || state.phase === "speaking") return "SPEAKING";
 	}
+
+	if (state.phase === "awaiting_agent" && visual?.narrating) return "NARRATING";
 
 	if (state.phase === "listening") {
 		// LISTENING only when mic is actually producing samples.
@@ -98,6 +122,7 @@ export function resolveChromeActivity(
 }
 
 export function chromeAudioLabel(muted: boolean): string {
+	// ON uses theme accent at paint time; MUTED stays semantic (warning).
 	return muted ? "🔇 MUTED" : "🔊 ON";
 }
 
@@ -105,6 +130,7 @@ export function chromeGlyph(activity: VoiceChromeActivity): string {
 	switch (activity) {
 		case "SPEAKING":
 		case "SYNTHESIZING":
+		case "VOICE_LOADING":
 			return "🔊";
 		case "MUTED":
 		case "PAUSED":
@@ -128,10 +154,11 @@ export function renderVoiceWidgetLine(
 	const audio = chromeAudioLabel(state.muted);
 	const glyph = chromeGlyph(activity);
 	const narrow = (visual?.terminalColumns ?? 80) < 48;
+	// Always insert VOICE_GLYPH_GAP so emoji never glues to the following text.
 	if (narrow) {
-		return `${glyph} ${activity}${state.muted ? " 🔇" : ""}`;
+		return `${glyph}${VOICE_GLYPH_GAP}${activity}${state.muted ? " 🔇" : ""}`;
 	}
-	return `${glyph} Gentle Voice │ ${activity} │ ${audio}`;
+	return `${glyph}${VOICE_GLYPH_GAP}${VOICE_BRAND} │ ${activity} │ ${audio}`;
 }
 
 function renderWaveOrActivity(
@@ -142,7 +169,7 @@ function renderWaveOrActivity(
 	if (!visual) return undefined;
 	if (state.muted) return undefined;
 
-	if (activity === "SYNTHESIZING") {
+	if (activity === "SYNTHESIZING" || activity === "VOICE_LOADING" || activity === "NARRATING") {
 		return "⋯";
 	}
 
@@ -165,6 +192,24 @@ function renderWaveOrActivity(
 	return undefined;
 }
 
+function renderTranscriptPreview(visual?: VoiceChromeVisual): string | undefined {
+	const kind = visual?.transcriptPreviewKind;
+	if (kind === "decoding") {
+		// Neutral — never reuse frozen words while whisper is still busy.
+		return "⋯ escuchando";
+	}
+	const text = visual?.transcriptPreview?.trim();
+	if (!text) return undefined;
+	const narrow = (visual?.terminalColumns ?? 80) < 48;
+	const max = narrow ? 36 : 72;
+	const clipped = text.length > max ? `${text.slice(0, max - 1)}…` : text;
+	if (kind === "final") {
+		return `✓ ${clipped}`;
+	}
+	// Explicit provisional marker — never looks like a committed send.
+	return `… ${clipped}`;
+}
+
 export function renderVoiceWidgetContent(
 	state: VoiceMachineState,
 	visual?: VoiceChromeVisual,
@@ -172,11 +217,16 @@ export function renderVoiceWidgetContent(
 	const line = renderVoiceWidgetLine(state, visual);
 	if (line === undefined) return undefined;
 	const activity = resolveChromeActivity(state, visual);
+	const lines = [line];
 	const wave = renderWaveOrActivity(state, visual, activity);
 	if (wave && wave.trim().length > 0) {
-		return [line, wave];
+		lines.push(wave);
 	}
-	return [line];
+	const preview = renderTranscriptPreview(visual);
+	if (preview) {
+		lines.push(preview);
+	}
+	return lines;
 }
 
 /** Short status-bar text (optional Pi setStatus). */
@@ -186,7 +236,17 @@ export function renderVoiceStatusText(
 ): string | undefined {
 	if (!state.enabled) return undefined;
 	const activity = resolveChromeActivity(state, visual);
-	return state.muted ? `voice ${activity} muted` : `voice ${activity}`;
+	const base = state.muted ? `voice ${activity} muted` : `voice ${activity}`;
+	if (visual?.transcriptPreviewKind === "decoding") {
+		return `${base} · stt…`;
+	}
+	if (visual?.transcriptPreviewKind === "partial" && visual.transcriptPreview?.trim()) {
+		return `${base} · parcial`;
+	}
+	if (visual?.transcriptPreviewKind === "final" && visual.transcriptPreview?.trim()) {
+		return `${base} · final`;
+	}
+	return base;
 }
 
 export interface VoiceChromeSnapshot {

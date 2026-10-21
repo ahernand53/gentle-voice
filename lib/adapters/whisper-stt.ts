@@ -30,18 +30,29 @@ export interface WhisperSttAdapterOptions {
 	readonly modelPath: string;
 	readonly dryRun?: boolean;
 	readonly timeoutMs?: number;
+	/** Shorter timeout for provisional / incremental passes. */
+	readonly partialTimeoutMs?: number;
 	readonly language?: string;
 	readonly tmpDir?: string;
 	readonly keepTemp?: boolean;
 	readonly threads?: number;
+	/** Threads for provisional passes (default: min(threads, 2)). */
+	readonly partialThreads?: number;
 	/** Whisper.cpp `--prompt` (initial context; does not rewrite transcript alone). */
 	readonly initialPrompt?: string;
 }
 
+export type WhisperDecodeProfile = "final" | "partial";
+
 export interface WhisperSttAdapter extends SttAdapter {
 	readonly lastPlan: WhisperSttPlan | undefined;
 	readonly lastMetrics: WhisperMetrics | undefined;
-	buildPlan(wavPath: string, language?: string): WhisperSttPlan;
+	buildPlan(wavPath: string, language?: string, profile?: WhisperDecodeProfile): WhisperSttPlan;
+	/** Greedy, lighter provisional decode — UI only; never submit to Pi. */
+	transcribePartial(
+		audio: AudioChunk,
+		options: { signal: AbortSignal; language?: string },
+	): Promise<SttResult>;
 	validateModelMagic(): Promise<{ ok: boolean; magic?: string; bytes?: number; problem?: string }>;
 }
 
@@ -111,7 +122,11 @@ export function createWhisperSttAdapter(options: WhisperSttAdapterOptions): Whis
 	let lastPlan: WhisperSttPlan | undefined;
 	let lastMetrics: WhisperMetrics | undefined;
 
-	const buildPlan = (wavPath: string, language?: string): WhisperSttPlan => {
+	const buildPlan = (
+		wavPath: string,
+		language?: string,
+		profile: WhisperDecodeProfile = "final",
+	): WhisperSttPlan => {
 		const lang = language ?? options.language ?? "es";
 		const args = [
 			"-m", options.modelPath,
@@ -119,8 +134,16 @@ export function createWhisperSttAdapter(options: WhisperSttAdapterOptions): Whis
 			"-nt",
 			"-np",
 		];
-		if (options.threads && options.threads > 0) {
-			args.push("-t", String(options.threads));
+		// Lab measure: greedy -bs 1 -t 2 was *slower* than default beam on ggml-small CPU.
+		// Partials use the same decode quality; win is overlapping speech, not a weaker model.
+		const threads = profile === "partial"
+			? (options.partialThreads ?? options.threads)
+			: options.threads;
+		if (threads && threads > 0) {
+			args.push("-t", String(threads));
+		}
+		if (profile === "partial") {
+			args.push("-sns");
 		}
 		if (lang && lang !== "auto") {
 			args.push("-l", lang);
@@ -177,76 +200,92 @@ export function createWhisperSttAdapter(options: WhisperSttAdapterOptions): Whis
 				detail: dryRun ? "whisper_ready_dry_run" : "whisper_ready_execute",
 			};
 		},
-		async transcribe(audio: AudioChunk, { signal, language }): Promise<SttResult> {
-			throwIfAborted(signal);
-			const avail = await adapter.availability();
-			if (avail.status === "unavailable") {
-				throw new Error(`whisper unavailable: ${avail.reason}`);
-			}
-
-			if (dryRun) {
-				const plan = buildPlan("<dry-run.wav>", language);
-				lastPlan = plan;
-				throwIfAborted(signal);
-				return { text: "", language: language ?? options.language ?? "es", confidence: 0 };
-			}
-
-			if (audio.bytes.byteLength === 0) {
-				throw new Error("empty_audio");
-			}
-
-			let wavBytes: Uint8Array;
-			if (audio.format === "wav" && isWavBuffer(audio.bytes)) {
-				wavBytes = audio.bytes;
-			} else if (audio.format === "pcm_s16le" || audio.format === "raw") {
-				wavBytes = pcmS16leToWav(audio.bytes, audio.sampleRateHz, audio.channels);
-			} else if (audio.format === "wav") {
-				throw new Error("invalid_wav");
-			} else {
-				throw new Error(`unsupported_audio_format:${audio.format}`);
-			}
-
-			await mkdir(tmpDir, { recursive: true });
-			const wavPath = join(tmpDir, `stt-${randomUUID()}.wav`);
-			await writeFile(wavPath, wavBytes);
-			const plan = buildPlan(wavPath, language);
-			lastPlan = plan;
-
-			const started = performance.now();
-			try {
-				const result = await runCaptured(plan.command, plan.args, {
-					signal,
-					timeoutMs: options.timeoutMs ?? 180_000,
-					env: {
-						...process.env,
-						// $ORIGIN already on binary; keep PATH clean
-					},
-				});
-				throwIfAborted(signal);
-				const elapsed = Math.round(performance.now() - started);
-				lastMetrics = {
-					loadAndTranscribeMs: elapsed,
-					inputBytes: audio.bytes.byteLength,
-					tempWavBytes: wavBytes.byteLength,
-				};
-				if (result.code !== 0) {
-					throw new Error(
-						`whisper-cli exited ${result.code}: ${result.stderr.toString("utf8").slice(0, 400)}`,
-					);
-				}
-				const text = parseWhisperStdout(result.stdout.toString("utf8"));
-				return {
-					text,
-					language: language ?? options.language ?? "es",
-					confidence: text ? 1 : 0,
-				};
-			} finally {
-				if (!options.keepTemp) {
-					await unlink(wavPath).catch(() => {});
-				}
-			}
+		async transcribe(audio: AudioChunk, opts: { signal: AbortSignal; language?: string }): Promise<SttResult> {
+			return runTranscribe(audio, opts, "final");
+		},
+		async transcribePartial(
+			audio: AudioChunk,
+			opts: { signal: AbortSignal; language?: string },
+		): Promise<SttResult> {
+			return runTranscribe(audio, opts, "partial");
 		},
 	};
+
+	async function runTranscribe(
+		audio: AudioChunk,
+		{ signal, language }: { signal: AbortSignal; language?: string },
+		profile: WhisperDecodeProfile,
+	): Promise<SttResult> {
+		throwIfAborted(signal);
+		const avail = await adapter.availability();
+		if (avail.status === "unavailable") {
+			throw new Error(`whisper unavailable: ${avail.reason}`);
+		}
+
+		if (dryRun) {
+			const plan = buildPlan("<dry-run.wav>", language, profile);
+			lastPlan = plan;
+			throwIfAborted(signal);
+			return { text: "", language: language ?? options.language ?? "es", confidence: 0 };
+		}
+
+		if (audio.bytes.byteLength === 0) {
+			throw new Error("empty_audio");
+		}
+
+		let wavBytes: Uint8Array;
+		if (audio.format === "wav" && isWavBuffer(audio.bytes)) {
+			wavBytes = audio.bytes;
+		} else if (audio.format === "pcm_s16le" || audio.format === "raw") {
+			wavBytes = pcmS16leToWav(audio.bytes, audio.sampleRateHz, audio.channels);
+		} else if (audio.format === "wav") {
+			throw new Error("invalid_wav");
+		} else {
+			throw new Error(`unsupported_audio_format:${audio.format}`);
+		}
+
+		await mkdir(tmpDir, { recursive: true });
+		const wavPath = join(tmpDir, `stt-${profile}-${randomUUID()}.wav`);
+		await writeFile(wavPath, wavBytes);
+		const plan = buildPlan(wavPath, language, profile);
+		lastPlan = plan;
+
+		const started = performance.now();
+		const timeoutMs = profile === "partial"
+			? (options.partialTimeoutMs ?? 45_000)
+			: (options.timeoutMs ?? 180_000);
+		try {
+			const result = await runCaptured(plan.command, plan.args, {
+				signal,
+				timeoutMs,
+				env: {
+					...process.env,
+				},
+			});
+			throwIfAborted(signal);
+			const elapsed = Math.round(performance.now() - started);
+			lastMetrics = {
+				loadAndTranscribeMs: elapsed,
+				inputBytes: audio.bytes.byteLength,
+				tempWavBytes: wavBytes.byteLength,
+			};
+			if (result.code !== 0) {
+				throw new Error(
+					`whisper-cli exited ${result.code}: ${result.stderr.toString("utf8").slice(0, 400)}`,
+				);
+			}
+			const text = parseWhisperStdout(result.stdout.toString("utf8"));
+			return {
+				text,
+				language: language ?? options.language ?? "es",
+				confidence: text ? (profile === "partial" ? 0.5 : 1) : 0,
+			};
+		} finally {
+			if (!options.keepTemp) {
+				await unlink(wavPath).catch(() => {});
+			}
+		}
+	}
 
 	return adapter;
 }

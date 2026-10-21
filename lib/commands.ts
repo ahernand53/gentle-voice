@@ -24,6 +24,11 @@ export const VOICE_SUBCOMMANDS: readonly VoiceCommandName[] = [
 	"edit",
 	"converse",
 	"purge",
+	"stream",
+	"voice-ai",
+	"barge-in",
+	"tts",
+	"vibevoice-setup",
 ] as const;
 
 /** Lab-only — not in VoiceCommandName; gated by isGentleVoiceLabMode(). */
@@ -31,7 +36,10 @@ export const LAB_VOICE_SUBCOMMANDS = [
 	"test-speak",
 	"ab-compare",
 	"ab-score",
-	"tts",
+	/** Conversational reply style (session appendSystemPrompt) — not hands-free converse. */
+	"converse-style",
+	/** Ensure OpenSource has voice-ai role (MiMo); does not change orchestrator/active. */
+	"voice-ai-profile",
 ] as const;
 export type LabVoiceSubcommand = (typeof LAB_VOICE_SUBCOMMANDS)[number];
 
@@ -58,7 +66,7 @@ export function parseVoiceArgs(raw: string): ParsedVoiceArgs {
 			return {
 				command: "",
 				rest: trimmed,
-				error: `Unknown subcommand "${head}". Try: on|off|listen|stop|mute|status|config|setup|storage|send|draft|edit|converse|purge`,
+				error: `Unknown subcommand "${head}". Try: on|off|listen|stop|mute|status|config|setup|storage|send|draft|edit|converse|purge|stream|voice-ai|barge-in|tts|vibevoice-setup`,
 			};
 		}
 		return {
@@ -73,7 +81,7 @@ export function parseVoiceArgs(raw: string): ParsedVoiceArgs {
 		return {
 			command: "",
 			rest: trimmed,
-			error: `Unknown subcommand "${head}". Try: on|off|listen|stop|mute|status|config|setup|storage|send|draft|edit|converse|purge`,
+			error: `Unknown subcommand "${head}". Try: on|off|listen|stop|mute|status|config|setup|storage|send|draft|edit|converse|purge|stream|voice-ai|barge-in|tts|vibevoice-setup`,
 		};
 	}
 	return { command, rest: tail.join(" ") };
@@ -107,13 +115,19 @@ export function voiceHelpText(options?: { includeLab?: boolean }): string {
 		"  /gentle:voice storage      Host isolation + private data dirs (cleanup dry-run)",
 		"  /gentle:voice purge        Show data-cleanup plan (requires confirm token to delete)",
 		"  /gentle:voice purge --keep-models   Same plan but preserve models/voices",
+		"  /gentle:voice stream auto|pcm|wav  VibeVoice playback. auto uses PCM when supported",
+		"  /gentle:voice voice-ai on|off|status  Narration model (does not change the written reply)",
+		"  /gentle:voice barge-in on|off|status  Interrupt playback by speaking",
+		"  /gentle:voice tts piper|vibevoice|kokoro  Select the TTS engine for this session",
+		"  /gentle:voice vibevoice-setup  Install VibeVoice after confirm. `plan` prints the terms. `cancel` stops the running install",
 	];
 	if (options?.includeLab || isGentleVoiceLabMode()) {
 		lines.push(
 			"  /gentle:voice test-speak     [lab] Fixed phrase TTS+playback (no LLM)",
-			"  /gentle:voice ab-compare [n] [engine] [lab] Play fixed phrase n (piper|kokoro)",
+			"  /gentle:voice ab-compare [n] [engine] [lab] Play fixed phrase n (piper|kokoro|vibevoice)",
 			"  /gentle:voice ab-score <1-5>  [lab] Rate last A/B trial naturalness",
-			"  /gentle:voice tts piper|kokoro [lab] Select installed TTS (does not change default permanently)",
+			"  /gentle:voice converse-style on|off|status  [lab] Session conversational reply style (1 LLM/turn)",
+			"  /gentle:voice voice-ai-profile [lab] Ensure OpenSource has role voice-ai; orchestrator unchanged",
 		);
 	}
 	lines.push(

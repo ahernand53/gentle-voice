@@ -11,7 +11,7 @@ import {
 } from "./pcm-amplitude.ts";
 import { WaveBarMeter, barCountForTerminalColumns } from "./wave-bars.ts";
 
-export type VisualSpeakStage = "idle" | "synthesizing" | "speaking";
+export type VisualSpeakStage = "idle" | "loading_voice" | "synthesizing" | "speaking";
 
 export interface VisualMeterOptions {
 	readonly enabled?: boolean;
@@ -46,6 +46,7 @@ export class VisualMeter {
 	#lastAmpLatencyMs = 0;
 	#speakStage: VisualSpeakStage = "idle";
 	#playbackPcm: Uint8Array | undefined;
+	#playbackRms = 0;
 	#playbackRate = 24_000;
 	#playbackChannels = 1;
 	#playbackStartedAt = 0;
@@ -120,6 +121,14 @@ export class VisualMeter {
 		this.#paint(this.#now());
 	}
 
+	/** Checkpoint / CUDA load — not generate. Distinct from SYNTHESIZING. */
+	beginLoadingVoice(): void {
+		this.#speakStage = "loading_voice";
+		this.stopPlaybackVisual(false);
+		this.wave.clear();
+		this.#paint(this.#now());
+	}
+
 	/**
 	 * Start speaking visual from real WAV/PCM. Progress estimated by wall clock
 	 * (pw-play has no byte cursor) — levels come from the WAV window at t, not RNG.
@@ -134,6 +143,7 @@ export class VisualMeter {
 		this.#clearPlaybackTimer();
 		this.#speakStage = "speaking";
 		this.#playbackPcm = pcmBytesFromAudio(audio.bytes, audio.format);
+		this.#playbackRms = 0;
 		this.#playbackRate = audio.sampleRateHz;
 		this.#playbackChannels = audio.channels;
 		this.#playbackStartedAt = this.#now();
@@ -153,9 +163,15 @@ export class VisualMeter {
 		this.#tickPlayback();
 	}
 
+	/** RMS of the playback window the meter is showing. 0 when not speaking. */
+	playbackLevel(): number {
+		return this.#speakStage === "speaking" ? this.#playbackRms : 0;
+	}
+
 	stopPlaybackVisual(clearStage = true): void {
 		this.#clearPlaybackTimer();
 		this.#playbackPcm = undefined;
+		this.#playbackRms = 0;
 		if (clearStage) this.#speakStage = "idle";
 		this.wave.clear();
 	}
@@ -187,6 +203,7 @@ export class VisualMeter {
 			speechThreshold: this.#speechThreshold,
 			channels: this.#playbackChannels,
 		});
+		this.#playbackRms = sample.rms;
 		this.#lastAmpAt = now;
 		this.wave.pushLevel(displayLevelFromRms(sample.rms), true, now);
 		this.#maybePaint(now);

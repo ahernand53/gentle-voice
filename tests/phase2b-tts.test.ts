@@ -291,8 +291,10 @@ test("isolation: test-speak extension path does not call sendUserMessage", async
 
 test("real: lab resolve wires piper + pipewire playback under REAL_AUDIO", { skip: skipWithoutLab }, () => {
 	const prev = process.env.GENTLE_VOICE_REAL_AUDIO;
+	const prevTts = process.env.GENTLE_VOICE_TTS;
 	applyDeveloperLabEnv();
 	process.env.GENTLE_VOICE_REAL_AUDIO = "1";
+	process.env.GENTLE_VOICE_TTS = "piper";
 	try {
 		const lab = resolveLabVoiceAdapters({ forceStub: false });
 		assert.equal(lab.ttsKind, "piper");
@@ -302,5 +304,7 @@ test("real: lab resolve wires piper + pipewire playback under REAL_AUDIO", { ski
 	} finally {
 		if (prev === undefined) delete process.env.GENTLE_VOICE_REAL_AUDIO;
 		else process.env.GENTLE_VOICE_REAL_AUDIO = prev;
+		if (prevTts === undefined) delete process.env.GENTLE_VOICE_TTS;
+		else process.env.GENTLE_VOICE_TTS = prevTts;
 	}
 });

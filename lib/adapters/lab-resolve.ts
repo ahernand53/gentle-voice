@@ -19,6 +19,14 @@ import {
 	labKokoroPresent,
 } from "./kokoro-tts.ts";
 import {
+	createVibeVoiceTtsAdapter,
+	isVibeVoiceReady,
+	resolveVibeVoiceOnColdStart,
+	type VibeVoiceTtsAdapter,
+} from "./vibevoice-tts.ts";
+import { createVibeVoicePiperBridge } from "./vibevoice-piper-bridge.ts";
+import { chooseTtsEngine, resolvePreferredTts } from "../vibevoice/tts-preference.ts";
+import {
 	createStubCaptureAdapter,
 	createStubPlaybackAdapter,
 	createStubSttAdapter,
@@ -139,15 +147,17 @@ export interface LabResolveResult {
 	readonly bundle: VoiceAdapterBundle;
 	readonly captureKind: "pipewire" | "ffmpeg" | "stub";
 	readonly sttKind: "whisper" | "stub";
-	readonly ttsKind: "piper" | "kokoro" | "stub";
+	readonly ttsKind: "piper" | "kokoro" | "vibevoice" | "stub";
 	readonly playbackKind: "pipewire" | "ffmpeg" | "stub";
 	readonly whisperCli?: string;
 	readonly modelPath?: string;
 	readonly piperPath?: string;
 	readonly piperVoice?: string;
 	readonly kokoroReady?: boolean;
+	readonly vibevoiceReady?: boolean;
 	readonly piperAdapter?: TtsAdapter;
 	readonly kokoroAdapter?: TtsAdapter;
+	readonly vibevoiceAdapter?: TtsAdapter;
 }
 
 export function resolveLabVoiceAdapters(options?: {
@@ -155,6 +165,8 @@ export function resolveLabVoiceAdapters(options?: {
 	tmpDir?: string;
 	forceStub?: boolean;
 	onVadEnd?: () => void;
+	/** Fired each listen when VAD backend is chosen (lab UI / diagnostics). */
+	onVadResolved?: (info: { backend: string; fallbackReason?: string }) => void;
 }): LabResolveResult {
 	const platform = detectVoicePlatform();
 	const tmpDir = resolveTmpDir(options);
@@ -164,7 +176,7 @@ export function resolveLabVoiceAdapters(options?: {
 	let stt: SttAdapter = createStubSttAdapter();
 	let sttKind: "whisper" | "stub" = "stub";
 	let tts: TtsAdapter = createStubTtsAdapter();
-	let ttsKind: "piper" | "kokoro" | "stub" = "stub";
+	let ttsKind: "piper" | "kokoro" | "vibevoice" | "stub" = "stub";
 	let playback: PlaybackAdapter = createStubPlaybackAdapter();
 	let playbackKind: "pipewire" | "ffmpeg" | "stub" = "stub";
 	let whisperCli: string | undefined;
@@ -173,7 +185,9 @@ export function resolveLabVoiceAdapters(options?: {
 	let piperVoice: string | undefined;
 	let piperAdapter: TtsAdapter | undefined;
 	let kokoroAdapter: TtsAdapter | undefined;
+	let vibevoiceAdapter: VibeVoiceTtsAdapter | undefined;
 	let kokoroReady = false;
+	let vibevoiceReady = false;
 
 	if (!options?.forceStub) {
 		if (platform === "linux") {
@@ -188,7 +202,33 @@ export function resolveLabVoiceAdapters(options?: {
 						maxIntraPauseMs: behavior?.vadMaxIntraPauseMs ?? 450,
 						postRollMs: 220,
 					},
+					// auto: Silero when model+ORT present, else energy (no behavior change).
+					vadBackend: behavior?.vadBackend ?? "auto",
+					...(behavior?.sileroModelPath
+						? { sileroModelPath: behavior.sileroModelPath }
+						: {}),
 					vadArmDelayMs: behavior?.echoSettleMs ?? 250,
+					onVadResolved: (info) => {
+						const line = `${JSON.stringify({ at: new Date().toISOString(), ...info })}\n`;
+						const logPath = process.env.GENTLE_VOICE_VAD_LOG?.trim();
+						if (logPath) {
+							void import("node:fs/promises").then(({ appendFile, mkdir }) =>
+								mkdir(logPath.replace(/[/\\][^/\\]+$/, ""), { recursive: true })
+									.then(() => appendFile(logPath, line, "utf8"))
+									.catch(() => {}),
+							);
+						}
+						// Always visible in GS-Lab (Ghostty stderr); DIAG still covers non-lab.
+						const lab = process.env.GENTLE_VOICE_LAB === "1"
+							|| process.env.GENTLE_VOICE_LAB_DIAG === "1";
+						if (lab) {
+							const msg = info.fallbackReason
+								? `[gentle-voice] VAD backend=${info.backend} fallback=${info.fallbackReason}`
+								: `[gentle-voice] VAD backend=${info.backend}`;
+							console.error(msg);
+						}
+						options?.onVadResolved?.(info);
+					},
 					...(options?.onVadEnd ? { onVadEnd: options.onVadEnd } : {}),
 				});
 				captureKind = "pipewire";
@@ -252,13 +292,36 @@ export function resolveLabVoiceAdapters(options?: {
 		if (labKokoroPresent()) {
 			kokoroAdapter = createKokoroTtsAdapter({ tmpDir, keepTemp: false, dryRun: false });
 			kokoroReady = true;
-			const prefer = (process.env.GENTLE_VOICE_TTS ?? "").trim().toLowerCase();
-			// Product default remains Piper; Kokoro only when explicitly preferred in lab.
-			if (prefer === "kokoro" && kokoroAdapter) {
-				tts = kokoroAdapter;
-				ttsKind = "kokoro";
-			}
 		}
+
+		// Optional engine. Piper stays selected until the user chooses VibeVoice
+		// (env, preference file, or a completed onboarding). Lab mode is not required.
+		if (isVibeVoiceReady()) {
+			vibevoiceAdapter = createVibeVoiceTtsAdapter({ tmpDir, keepTemp: false, dryRun: false });
+			vibevoiceReady = true;
+		}
+
+		const prefer = chooseTtsEngine({
+			preference: resolvePreferredTts(process.env),
+			vibevoiceReady,
+			kokoroReady,
+		});
+		if (prefer === "kokoro" && kokoroAdapter) {
+			tts = kokoroAdapter;
+			ttsKind = "kokoro";
+		} else if (prefer === "vibevoice" && vibevoiceAdapter) {
+			// Default wait: keep VV selected while loading. Opt-in Piper cold via env.
+			if (resolveVibeVoiceOnColdStart() === "piper" && piperAdapter) {
+				tts = createVibeVoicePiperBridge({
+					vibevoice: vibevoiceAdapter,
+					piper: piperAdapter,
+				});
+			} else {
+				tts = vibevoiceAdapter;
+			}
+			ttsKind = "vibevoice";
+		}
+		// else: Piper (or stub) already assigned — default unchanged
 	}
 
 	const bundle = resolveVoiceAdapters({
@@ -276,11 +339,13 @@ export function resolveLabVoiceAdapters(options?: {
 		ttsKind,
 		playbackKind,
 		kokoroReady,
+		vibevoiceReady,
 		...(whisperCli ? { whisperCli } : {}),
 		...(modelPath ? { modelPath } : {}),
 		...(piperPath ? { piperPath } : {}),
 		...(piperVoice ? { piperVoice } : {}),
 		...(piperAdapter ? { piperAdapter } : {}),
 		...(kokoroAdapter ? { kokoroAdapter } : {}),
+		...(vibevoiceAdapter ? { vibevoiceAdapter } : {}),
 	};
 }

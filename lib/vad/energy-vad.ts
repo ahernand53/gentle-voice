@@ -1,37 +1,23 @@
 /**
  * Local energy VAD — no LLM, no network.
  * Distinguishes: leading silence → speech → brief pause → end-of-utterance.
+ * Remains the fail-closed fallback when Silero is unavailable.
  */
 
-export type VadPhase = "leading_silence" | "speech" | "pause" | "ended";
+import type { VadEngine, VadEngineState, VadPhase, VadTimingOptions } from "./types.ts";
 
-export interface EnergyVadOptions {
+export type { VadPhase } from "./types.ts";
+
+export interface EnergyVadOptions extends VadTimingOptions {
 	/** RMS threshold (0–1 relative to int16 full scale). */
 	readonly speechThreshold?: number;
-	/** Silence hang after speech before end (ms). */
-	readonly silenceHangMs?: number;
 	/** Ignore leading silence shorter than this before arming (ms). */
 	readonly minLeadingSilenceMs?: number;
-	/** Brief pause inside utterance that must NOT end capture (ms). */
-	readonly maxIntraPauseMs?: number;
-	/**
-	 * Extra audio kept after silence-hang fires before ending (ms).
-	 * Catches the tail of the last word / buffer drain.
-	 */
-	readonly postRollMs?: number;
-	/** Hard cap on total capture (ms). */
-	readonly maxListenMs?: number;
-	readonly sampleRateHz?: number;
 }
 
-export interface EnergyVadState {
-	phase: VadPhase;
-	readonly speechSeen: boolean;
-	readonly elapsedMs: number;
-	readonly silenceMs: number;
-}
+export type EnergyVadState = VadEngineState;
 
-export function createEnergyVad(options: EnergyVadOptions = {}) {
+export function createEnergyVad(options: EnergyVadOptions = {}): VadEngine {
 	const speechThreshold = options.speechThreshold ?? 0.012;
 	const silenceHangMs = options.silenceHangMs ?? 1_200;
 	const maxIntraPauseMs = options.maxIntraPauseMs ?? 450;
@@ -43,21 +29,24 @@ export function createEnergyVad(options: EnergyVadOptions = {}) {
 	let speechSeen = false;
 	let elapsedSamples = 0;
 	let silenceSamples = 0;
+	let voicedSamples = 0;
 	/** Samples collected after hang threshold while draining post-roll. */
 	let postRollSamples = 0;
 
 	const samplesToMs = (n: number) => (n / sampleRateHz) * 1_000;
 
 	return {
-		get state(): EnergyVadState {
+		backend: "energy",
+		get state(): VadEngineState {
 			return {
 				phase,
 				speechSeen,
 				elapsedMs: samplesToMs(elapsedSamples),
 				silenceMs: samplesToMs(silenceSamples),
+				voicedMs: samplesToMs(voicedSamples),
+				backend: "energy",
 			};
 		},
-		/** Feed interleaved s16le mono PCM. Returns true when utterance should end. */
 		pushPcmS16le(chunk: Uint8Array): boolean {
 			const view = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
 			const samples = Math.floor(chunk.byteLength / 2);
@@ -72,6 +61,7 @@ export function createEnergyVad(options: EnergyVadOptions = {}) {
 				}
 				if (amp >= speechThreshold) {
 					speechSeen = true;
+					voicedSamples += 1;
 					silenceSamples = 0;
 					postRollSamples = 0;
 					phase = "speech";
@@ -105,9 +95,10 @@ export function createEnergyVad(options: EnergyVadOptions = {}) {
 			speechSeen = false;
 			elapsedSamples = 0;
 			silenceSamples = 0;
+			voicedSamples = 0;
 			postRollSamples = 0;
 		},
 	};
 }
 
-export type EnergyVad = ReturnType<typeof createEnergyVad>;
+export type EnergyVad = VadEngine;

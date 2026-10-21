@@ -5,8 +5,7 @@
  * Does not invent content. Ignores thinking/tools (caller feeds text only).
  */
 
-import { markdownToSpeakable } from "./markdown-for-tts.ts";
-import { normalizeForTts } from "./normalize-for-tts.ts";
+import { renderForSpeech, type SpeechRenderMode } from "./speech-renderer.ts";
 
 const SENTENCE_END = /([.!?…])(?:\s+|$)/;
 
@@ -29,6 +28,13 @@ export interface SentenceAssemblerOptions {
 	readonly minCharsPerUnit?: number;
 	/** Always emit a single very long sentence alone (avoid huge first wait). */
 	readonly longSentenceChars?: number;
+	/**
+	 * Emit the first complete sentence alone (TTFA), then resume Strategy B grouping.
+	 * Does not cut mid-word: still waits for sentence-end / soft-flush boundaries.
+	 */
+	readonly earlyFirstUnit?: boolean;
+	readonly speechMode?: SpeechRenderMode;
+	readonly cwd?: string;
 }
 
 /**
@@ -44,6 +50,10 @@ export class SentenceAssembler {
 	#minSentences: number;
 	#minChars: number;
 	#longSentenceChars: number;
+	#earlyFirstUnit: boolean;
+	#firstUnitEmitted = false;
+	#speechMode: SpeechRenderMode;
+	#cwd?: string;
 	/** Completed sentences waiting to be grouped into a speak unit. */
 	#pending: string[] = [];
 	#emittedConcat = "";
@@ -55,6 +65,17 @@ export class SentenceAssembler {
 		this.#minSentences = Math.max(1, options.minSentencesPerUnit ?? 2);
 		this.#minChars = options.minCharsPerUnit ?? 140;
 		this.#longSentenceChars = options.longSentenceChars ?? 200;
+		this.#earlyFirstUnit = options.earlyFirstUnit ?? false;
+		this.#speechMode = options.speechMode ?? "natural";
+		this.#cwd = options.cwd;
+	}
+
+	#render(raw: string): string {
+		return renderForSpeech(raw, {
+			language: this.#language,
+			mode: this.#speechMode,
+			cwd: this.#cwd,
+		}).spoken.trim();
 	}
 
 	get buffered(): string {
@@ -87,10 +108,11 @@ export class SentenceAssembler {
 		this.#pending = [];
 		this.#emittedConcat = "";
 		this.#spokenConcat = "";
+		this.#firstUnitEmitted = false;
 	}
 
 	remainderForFinal(finalPlain: string): string {
-		const want = normalizeForTts(markdownToSpeakable(finalPlain), this.#language).trim();
+		const want = this.#render(finalPlain);
 		const already = this.#emittedConcat.trim() || this.#spokenConcat.trim();
 		if (!want) return "";
 		if (!already) return want;
@@ -166,6 +188,8 @@ export class SentenceAssembler {
 		if (force) return this.#pending.length;
 		const first = this.#pending[0]!;
 		if (first.length >= this.#longSentenceChars) return 1;
+		// TTFA: first complete sentence alone; later units keep Strategy B.
+		if (this.#earlyFirstUnit && !this.#firstUnitEmitted) return 1;
 		let chars = 0;
 		let n = 0;
 		for (const s of this.#pending) {
@@ -179,10 +203,11 @@ export class SentenceAssembler {
 
 	#toUnit(raw: string): AssembledUnit | undefined {
 		if (!raw || raw.length < 2) return undefined;
-		const speakable = normalizeForTts(markdownToSpeakable(raw), this.#language).trim();
+		const speakable = this.#render(raw);
 		if (!speakable || speakable.length < 2) return undefined;
 		this.#seq += 1;
 		this.#emitted += 1;
+		this.#firstUnitEmitted = true;
 		this.markEmitted(speakable);
 		return {
 			id: `u${this.#seq}`,

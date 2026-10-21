@@ -11,17 +11,68 @@ export interface SttCorrectionRule {
 	readonly reason: string;
 }
 
-/** Default lab lexicon — Gentle Voice / Shell + common stack names. */
+/**
+ * Default lab lexicon — Gentle Voice / Shell + frequent stack mishears.
+ * Conservative: only high-confidence Whisper hallucinations / spellings.
+ * Do NOT add short ambiguous tokens (e.g. bare "Sea") that could alter Spanish.
+ */
 export const DEFAULT_STT_CORRECTION_RULES: readonly SttCorrectionRule[] = Object.freeze([
 	{ from: "Jendred Voice", to: "Gentle Voice", reason: "product_name" },
 	{ from: "Jendred Shell", to: "Gentle Shell", reason: "product_name" },
 	{ from: "Gender Voice", to: "Gentle Voice", reason: "product_name" },
 	{ from: "Gender Shell", to: "Gentle Shell", reason: "product_name" },
-	{ from: "Postgres SQL", to: "PostgreSQL", reason: "tech_stack" },
-	{ from: "PostgresSQL", to: "PostgreSQL", reason: "tech_stack" },
+	// C# — observed lab mishears (ggml-small ES)
+	{ from: "C-Charm", to: "C#", reason: "tech_stack" },
+	{ from: "C Charm", to: "C#", reason: "tech_stack" },
+	{ from: "C-charm", to: "C#", reason: "tech_stack" },
+	{ from: "Sicharm", to: "C#", reason: "tech_stack" },
+	{ from: "Si Charm", to: "C#", reason: "tech_stack" },
 	{ from: "C Sharp", to: "C#", reason: "tech_stack" },
 	{ from: "C sharp", to: "C#", reason: "tech_stack" },
 	{ from: "C-Sharp", to: "C#", reason: "tech_stack" },
+	{ from: "C-sharp", to: "C#", reason: "tech_stack" },
+	{ from: "Csharp", to: "C#", reason: "tech_stack" },
+	{ from: "CSharp", to: "C#", reason: "tech_stack" },
+	// .NET family
+	{ from: "dot net", to: ".NET", reason: "tech_stack" },
+	{ from: "Dot Net", to: ".NET", reason: "tech_stack" },
+	{ from: "dotnet", to: ".NET", reason: "tech_stack" },
+	{ from: "ASP net", to: "ASP.NET", reason: "tech_stack" },
+	{ from: "ASP Net", to: "ASP.NET", reason: "tech_stack" },
+	{ from: "asp.net", to: "ASP.NET", reason: "tech_stack" },
+	// Databases
+	{ from: "Postgres SQL", to: "PostgreSQL", reason: "tech_stack" },
+	{ from: "PostgresSQL", to: "PostgreSQL", reason: "tech_stack" },
+	{ from: "Postgress SQL", to: "PostgreSQL", reason: "tech_stack" },
+	{ from: "postgre SQL", to: "PostgreSQL", reason: "tech_stack" },
+	{ from: "Postgre SQL", to: "PostgreSQL", reason: "tech_stack" },
+	{ from: "SQL server", to: "SQL Server", reason: "tech_stack" },
+	{ from: "Sequel Server", to: "SQL Server", reason: "tech_stack" },
+	// PostgreSQL — observed ES ggml-small mishears. Bare "Postgres" stays:
+	// that is a valid name, not a misspelling we are allowed to rewrite.
+	{ from: "Pobosgres SQL", to: "PostgreSQL", reason: "tech_stack" },
+	{ from: "Pobosgres", to: "PostgreSQL", reason: "tech_stack" },
+	{ from: "Pobogres", to: "PostgreSQL", reason: "tech_stack" },
+	{ from: "Posgresql", to: "PostgreSQL", reason: "tech_stack" },
+	{ from: "Posgres SQL", to: "PostgreSQL", reason: "tech_stack" },
+	// Front / runtimes — phrases only. "Angulares" is Spanish; do not map it.
+	{ from: "ASP.NET Core", to: "ASP.NET Core", reason: "tech_stack" },
+	{ from: "ASP Net Core", to: "ASP.NET Core", reason: "tech_stack" },
+	{ from: "ASP.net Core", to: "ASP.NET Core", reason: "tech_stack" },
+	{ from: "Type Script", to: "TypeScript", reason: "tech_stack" },
+	{ from: "Java Script", to: "JavaScript", reason: "tech_stack" },
+	{ from: "Node JS", to: "Node.js", reason: "tech_stack" },
+	{ from: "Node.JS", to: "Node.js", reason: "tech_stack" },
+	{ from: "Nodejs", to: "Node.js", reason: "tech_stack" },
+	{ from: "Git Hub", to: "GitHub", reason: "tech_stack" },
+	{ from: "Cubernetes", to: "Kubernetes", reason: "tech_stack" },
+	{ from: "Kubernets", to: "Kubernetes", reason: "tech_stack" },
+	{ from: "Doquer", to: "Docker", reason: "tech_stack" },
+	{ from: "Dóquer", to: "Docker", reason: "tech_stack" },
+	{ from: "Cursor Agent", to: "Cursor Agent", reason: "product_name" },
+	{ from: "Anionic", to: "Ionic", reason: "tech_stack" },
+	{ from: "Xamarine", to: "Xamarin", reason: "tech_stack" },
+	{ from: "Xamarín", to: "Xamarin", reason: "tech_stack" },
 ]);
 
 /**
@@ -45,9 +96,16 @@ function escapeRegExp(s: string): string {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** Whole phrase only. `\b` fails on `#` and on accented letters. */
+function phrasePattern(from: string): RegExp {
+	const body = escapeRegExp(from).replace(/\\ /g, "\\s+");
+	return new RegExp(`(?<![\\p{L}\\p{N}_])${body}(?![\\p{L}\\p{N}_])`, "giu");
+}
+
 /**
  * Apply literal phrase replacements (case-insensitive), longest `from` first
  * so "Jendred Voice" wins over a hypothetical shorter rule.
+ * Sync and local: no second model, no LLM. Unknown text stays as Whisper wrote it.
  */
 export function applySttCorrections(
 	text: string,
@@ -59,9 +117,9 @@ export function applySttCorrections(
 	const ordered = [...rules].sort((a, b) => b.from.length - a.from.length);
 
 	for (const rule of ordered) {
-		const re = new RegExp(escapeRegExp(rule.from), "gi");
-		if (!re.test(corrected)) continue;
-		corrected = corrected.replace(re, rule.to);
+		const next = corrected.replace(phrasePattern(rule.from), rule.to);
+		if (next === corrected) continue;
+		corrected = next;
 		applied.push({ from: rule.from, to: rule.to, reason: rule.reason });
 	}
 

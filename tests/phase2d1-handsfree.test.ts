@@ -79,7 +79,7 @@ test("VAD: speech → pause → hang → post-roll before end; max listen", () =
 
 test("compact widget factory: no full-width pad; theme paint keeps roles", () => {
 	const factory = voiceWidgetContent(
-		["🎙 Gentle Voice │ READY │ 🔊 ON", "▁ ▄ █"],
+		["🎙  Gentle Voice │ READY │ 🔊 ON", "▁ ▄ █"],
 		"READY",
 	);
 	assert.equal(typeof factory, "function");

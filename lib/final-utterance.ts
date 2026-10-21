@@ -125,13 +125,12 @@ export function selectSpokenSentences(
 
 	const pickedIdx = new Set<number>();
 
-	// Force-include primary results (especially the lead answer) before ranking fill.
+	// NEVER start a spoken summary mid-reply: always keep the opening sentence.
+	if (sentences[0]) pickedIdx.add(0);
+
+	// Force-include other primary results before ranking fill.
 	for (const item of ranked) {
 		if (item.primary && pickedIdx.size < maxN) pickedIdx.add(item.index);
-	}
-	// If first sentence looks like a primary and somehow missed, still keep it.
-	if (sentences[0] && isPrimaryResultSentence(sentences[0], 0)) {
-		pickedIdx.add(0);
 	}
 
 	for (const item of ranked) {

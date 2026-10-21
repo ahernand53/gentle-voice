@@ -187,7 +187,11 @@ test("2B.1: quality profiles declared; Piper+Kokoro lab-verified locally", () =>
 	assert.ok(preferredProvidersForProfile("balanced").length > 0);
 	const verified = TTS_PROVIDER_RESEARCH_CATALOG.filter((p) => p.verifiedLocally);
 	const ids = verified.map((p) => p.id).sort();
-	assert.deepEqual(ids, ["kokoro-ef-dora", "piper-es-AR-daniela-high"]);
+	assert.deepEqual(ids, [
+		"kokoro-ef-dora",
+		"piper-es-AR-daniela-high",
+		"vibevoice-sp-Spk0_woman",
+	]);
 	assert.ok(TTS_PROVIDER_RESEARCH_CATALOG.every((p) => p.licenseHint.length > 0));
 });
 

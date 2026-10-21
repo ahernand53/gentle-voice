@@ -128,6 +128,16 @@ export const TTS_PROVIDER_RESEARCH_CATALOG: readonly TtsProviderInfo[] = Object.
 		licenseHint: "Apache-2.0",
 		notes: "Umbrella id for profiles; prefer kokoro-ef-dora / kokoro-em-alex for selection.",
 	}),
+	Object.freeze({
+		id: "vibevoice-sp-Spk0_woman",
+		displayName: "VibeVoice Realtime 0.5B sp-Spk0_woman (ES experimental)",
+		engine: "vibevoice" as const,
+		platforms: ["linux"] as const,
+		verifiedLocally: true,
+		licenseHint: "MIT (research weights; English-trained)",
+		notes:
+			"Optional keep-alive worker. PCM when the host can play float32; WAV via /gentle:voice stream wav. Audible disclaimer is kept. Not the Piper default.",
+	}),
 ]);
 
 export function getQualityProfile(id: TtsQualityProfileId | string): TtsQualityProfile | undefined {

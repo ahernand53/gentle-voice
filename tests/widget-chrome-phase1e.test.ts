@@ -27,11 +27,11 @@ test("chrome maps phases to TUI activity labels", () => {
 test("widget hidden when voice off; compact single line when on", () => {
 	assert.equal(renderVoiceWidgetLine(initialVoiceState()), undefined);
 	const ready = renderVoiceWidgetLine(initialVoiceState({ enabled: true, phase: "idle", muted: false }));
-	assert.equal(ready, "🎙 Gentle Voice │ READY │ 🔊 ON");
+	assert.equal(ready, "🎙  Gentle Voice │ READY │ 🔊 ON");
 	const muted = renderVoiceWidgetLine(initialVoiceState({ enabled: true, phase: "idle", muted: true }));
-	assert.equal(muted, "🔇 Gentle Voice │ MUTED │ 🔇 MUTED");
+	assert.equal(muted, "🔇  Gentle Voice │ MUTED │ 🔇 MUTED");
 	const listening = renderVoiceWidgetLine(initialVoiceState({ enabled: true, phase: "listening", muted: true }));
-	assert.equal(listening, "🎙 Gentle Voice │ LISTENING │ 🔇 MUTED");
+	assert.equal(listening, "🎙  Gentle Voice │ LISTENING │ 🔇 MUTED");
 	const snap = snapshotVoiceChrome(initialVoiceState({ enabled: true, phase: "idle" }));
 	assert.equal(snap.widgetContent?.length, 1);
 });
