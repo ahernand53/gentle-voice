@@ -1,0 +1,17 @@
+#!/bin/sh
+# Drop only the automatic Cursor attribution trailers.
+# Any other Co-authored-by or Made-with line stays. The author is untouched.
+
+set -eu
+
+message_file=${1:?commit message file is required}
+temporary=$(mktemp "${TMPDIR:-/tmp}/commit-msg.XXXXXX")
+trap 'rm -f "$temporary"' EXIT
+
+awk '
+  $0 == "Co-authored-by: Cursor <cursoragent@cursor.com>" { next }
+  $0 == "Made-with: Cursor" { next }
+  { print }
+' "$message_file" > "$temporary"
+
+cp "$temporary" "$message_file"

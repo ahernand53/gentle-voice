@@ -1,0 +1,43 @@
+name: Feature request
+description: Propose a change to Gentle Voice.
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem first. A proposal is not approved until the maintainer says so.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or missing today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Optional. Other approaches you considered.
+    validations:
+      required: false
+  - type: textarea
+    id: benefits
+    attributes:
+      label: Benefits
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Functional impact
+      description: What changes for Pi, Gentle Shell, Voice AI, onboarding, or model downloads?
+    validations:
+      required: true

@@ -2,9 +2,9 @@
 
 All notable changes to Gentle Voice are documented here.
 
-## [0.1.5] — unreleased
+## [0.1.5] — 2026-10-21
 
-Prepared, not published. npm `latest` remains `0.1.4` until publication is explicitly approved. The same package is installed with `pi install npm:gentle-voice` or `gentle-shell install npm:gentle-voice`.
+Published to npm as `gentle-voice@0.1.5`. npm `latest` is `0.1.5`. The same package is installed with `pi install npm:gentle-voice` or `gentle-shell install npm:gentle-voice`.
 
 ### Added
 

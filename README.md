@@ -11,7 +11,7 @@
 
 Gentle Voice is a [Pi package](https://pi.dev/docs/latest/packages) for conversation: microphone, speech-to-text, and text-to-speech. It runs inside Pi Coding Agent on its own, and inside Gentle Shell when that host is present. Gentle Shell is not required.
 
-`gentle-voice@0.1.5` is one npm package for both hosts. It is not on the public registry yet: npm `latest` is still `0.1.4`. After publication, the two commands below install that same package. Cloning this repository is not the install.
+[`gentle-voice@0.1.5`](https://www.npmjs.com/package/gentle-voice) is the published npm package for both hosts. npm `latest` is `0.1.5`. Pi lists it at [pi.dev/packages/gentle-voice](https://pi.dev/packages/gentle-voice). Cloning this repository is not the install.
 
 ## Install
 
@@ -45,7 +45,7 @@ Restart the host after installing.
 
 The first launch does not download models by itself. The voice-engine list is `VibeVoice`, `Piper`, and `Skip`. Pi highlights the first row, so the recommended engine is listed first with `(Recommended for your system)`. VibeVoice is recommended only when Linux x64, an NVIDIA GPU of at least 4 GB, 12 GiB free, and `python3` are confirmed. A failed GPU check is labeled `(Compatibility unknown)` and does not count as proof that the GPU is missing. Piper is the recommendation in that case, and when VibeVoice is `(Not supported)`, as long as Piper itself can run. Choosing an engine does not start a download. The install, finish, or repair question comes next. After Yes, Pi keeps a checklist on screen: each real step stays visible as Pending, Running, Completed, Failed, Reused, or Skipped. Notifications are not the progress view. When the checklist finishes, the engine is selected in the current session. `Ready to use` is shown only after that activation. No audio is played. `/gentle:voice status` and `/gentle:voice vibevoice-setup plan` stay available while that runs. `/gentle:voice vibevoice-setup cancel` stops it and keeps verified files. The next launch does not ask again when the install is already verified. Whisper is a separate question. An explicit Piper or VibeVoice choice is kept. `/gentle:voice setup` repeats the check. It does not install GPU drivers, CUDA, or a system Python.
 
-Do not pass `--extension` to a Pi that already has `npm:gentle-voice` installed. Pi would register `/gentle:voice` twice. After `0.1.5` is published, `pi install npm:gentle-voice` is the install. Until then, npm `latest` is still `0.1.4`.
+Do not pass `--extension` to a Pi that already has `npm:gentle-voice` installed. Pi would register `/gentle:voice` twice. Install with `pi install npm:gentle-voice` or `gentle-shell install npm:gentle-voice`. Both commands install that same npm package.
 
 ## First session
 
@@ -217,4 +217,6 @@ pnpm typecheck
 npm pack --dry-run
 ```
 
-Issues: https://github.com/efolchmontiel/gentle-voice/issues
+Issues and pull requests: [CONTRIBUTING.md](CONTRIBUTING.md).
+
+https://github.com/efolchmontiel/gentle-voice/issues
