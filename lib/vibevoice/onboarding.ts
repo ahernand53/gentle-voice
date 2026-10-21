@@ -23,6 +23,12 @@ import {
 	type InstallStepId,
 	type InstallStepState,
 } from "./install-progress.ts";
+import {
+	VIBEVOICE_PYTHON_CANDIDATES,
+	VIBEVOICE_PYTHON_PROBE,
+	VIBEVOICE_VENV_READY,
+	vibeVoicePythonSupported,
+} from "./python-runtime.ts";
 import { readTtsEnginePreference, writeTtsEnginePreference } from "./tts-preference.ts";
 
 export interface OnboardingIo {
@@ -126,6 +132,29 @@ function assertNoPrivilege(command: string, args: readonly string[]): void {
 	if (command === "sudo" || args.includes("sudo")) {
 		throw new Error("sudo_refused");
 	}
+}
+
+async function selectVibeVoiceBasePython(
+	io: OnboardingIo,
+	signal: AbortSignal,
+): Promise<string> {
+	let saw: string | undefined;
+	for (const command of VIBEVOICE_PYTHON_CANDIDATES) {
+		let probed: { code: number; detail?: string };
+		try {
+			probed = await io.run(command, ["-c", VIBEVOICE_PYTHON_PROBE], signal);
+		} catch {
+			continue;
+		}
+		if (probed.code !== 0) continue;
+		if (probed.detail) saw = probed.detail.trim();
+		if (vibeVoicePythonSupported(probed.detail ?? "")) return command;
+	}
+	throw Object.assign(new Error("python_unsupported"), {
+		detail: saw
+			? `PyTorch publishes Linux wheels for Python 3.10 through 3.14. Found ${saw}.`
+			: "PyTorch publishes Linux wheels for Python 3.10 through 3.14. No matching interpreter was found.",
+	});
 }
 
 function assertPrivateTool(command: string, targetDir: string): void {
@@ -305,28 +334,22 @@ export async function runVibeVoiceOnboarding(input: {
 		const venv = join(input.targetDir, ".venv");
 		const python = join(venv, "bin", "python");
 		const pip = join(venv, "bin", "pip");
-		assertNoPrivilege("python3", ["-m", "venv", venv]);
 		let pythonReady = false;
 		try {
 			await stat(python);
 			await stat(pip);
-			const checked = await io.run(
-				python,
-				["-c", "import sys; raise SystemExit(0 if sys.prefix.endswith('.venv') else 3)"],
-				signal,
-			);
+			const checked = await io.run(python, ["-c", VIBEVOICE_VENV_READY], signal);
 			pythonReady = checked.code === 0;
 		} catch {
 			pythonReady = false;
 		}
 		if (!pythonReady) {
-			const created = await io.run("python3", ["-m", "venv", venv], signal);
+			await rm(venv, { recursive: true, force: true });
+			const base = await selectVibeVoiceBasePython(io, signal);
+			assertNoPrivilege(base, ["-m", "venv", venv]);
+			const created = await io.run(base, ["-m", "venv", venv], signal);
 			if (created.code !== 0) throw new Error("venv_failed");
-			const checked = await io.run(
-				python,
-				["-c", "import sys; raise SystemExit(0 if sys.prefix.endswith('.venv') else 3)"],
-				signal,
-			);
+			const checked = await io.run(python, ["-c", VIBEVOICE_VENV_READY], signal);
 			if (checked.code !== 0) throw new Error("python_not_private");
 			mark("python", "completed");
 		} else mark("python", "reused");

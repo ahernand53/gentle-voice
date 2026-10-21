@@ -2,6 +2,12 @@
 
 All notable changes to Gentle Voice are documented here.
 
+## [0.1.6] — 2026-10-21
+
+### Fixed
+
+- VibeVoice creates its private `.venv` with Python 3.10–3.14, preferring 3.14 when it is installed. `python3` on this machine is 3.15, and PyTorch publishes no wheel for it, so pip reported `No matching distribution found for torch`. An existing 3.15 environment is discarded and created again.
+
 ## [0.1.5] — 2026-10-21
 
 Published to npm as `gentle-voice@0.1.5`. npm `latest` is `0.1.5`. The same package is installed with `pi install npm:gentle-voice` or `gentle-shell install npm:gentle-voice`.
