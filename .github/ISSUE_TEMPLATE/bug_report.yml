@@ -1,0 +1,68 @@
+name: Bug report
+description: Report a defect in Gentle Voice.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe one defect. Remove secrets, tokens, private transcripts, and personal paths from logs.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What failed?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Gentle Voice version, for example 0.1.5.
+      placeholder: "0.1.5"
+    validations:
+      required: true
+  - type: dropdown
+    id: host
+    attributes:
+      label: Host
+      options:
+        - Pi Coding Agent
+        - Gentle Shell
+        - Both
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: Linux x64 with PipeWire is the tested audio path. Windows and macOS are not supported audio hosts.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Optional. Paste logs only after secrets and personal paths are removed.
+    validations:
+      required: false

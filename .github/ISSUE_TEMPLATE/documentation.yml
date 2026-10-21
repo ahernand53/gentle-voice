@@ -1,0 +1,26 @@
+name: Documentation
+description: Report incorrect or missing documentation.
+title: "docs: "
+labels:
+  - documentation
+body:
+  - type: textarea
+    id: location
+    attributes:
+      label: File or section
+      description: Path and heading, or the page URL.
+    validations:
+      required: true
+  - type: textarea
+    id: incorrect
+    attributes:
+      label: Incorrect information
+      description: Quote the statement that is wrong or missing.
+    validations:
+      required: true
+  - type: textarea
+    id: correction
+    attributes:
+      label: Proposed correction
+    validations:
+      required: true

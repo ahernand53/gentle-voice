@@ -1,0 +1,43 @@
+# Validates the pull request body against GitHub Issues.
+#
+# pull_request_target runs the workflow file from the base branch. This job
+# checks out that same base commit and never checks out the pull request head.
+# Do not add a step that runs code, scripts, or package installs from the
+# pull request. The default token stays read-only.
+#
+# Editing this file in a fork does not change the check that GitHub runs.
+# The administrative exception is accepted only when GitHub marks the author
+# as OWNER. A line in the template is not enough.
+
+name: linked-issue
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  linked-issue:
+    name: linked-issue
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the base commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Require a classified issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
+        run: python3 scripts/validate-pr-issue.py
