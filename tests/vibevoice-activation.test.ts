@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { formatPiperActivation, formatVibeVoiceActivation, formatWhisperActivation } from "../lib/vibevoice/activation.ts";
 import { driveVibeVoiceInstall } from "../lib/vibevoice/install-drive.ts";
@@ -187,9 +188,9 @@ test("the worker rejects a parent model directory before importing torch", () =>
 	mkdirSync(modelDir, { recursive: true });
 	writeFileSync(join(modelDir, "model.safetensors"), "not-a-model");
 	writeFileSync(join(modelDir, "config.json"), "{}");
-	const worker = new URL("../scripts/vibevoice-lab-worker.py", import.meta.url);
+	const worker = fileURLToPath(new URL("../scripts/vibevoice-lab-worker.py", import.meta.url));
 	const started = Date.now();
-	const result = spawnSync("python3", [worker.pathname], {
+	const result = spawnSync("python3", [worker], {
 		env: {
 			...process.env,
 			GENTLE_VOICE_VIBEVOICE_HOME: root,
@@ -212,8 +213,8 @@ test("the worker probe starts the process without loading the model", () => {
 	const voiceDir = join(root, "code", "demo", "voices", "streaming_model");
 	mkdirSync(voiceDir, { recursive: true });
 	writeFileSync(join(voiceDir, "sp-Spk0_woman.pt"), "not-a-voice");
-	const worker = new URL("../scripts/vibevoice-lab-worker.py", import.meta.url);
-	const result = spawnSync("python3", [worker.pathname], {
+	const worker = fileURLToPath(new URL("../scripts/vibevoice-lab-worker.py", import.meta.url));
+	const result = spawnSync("python3", [worker], {
 		env: {
 			...process.env,
 			GENTLE_VOICE_VIBEVOICE_HOME: root,

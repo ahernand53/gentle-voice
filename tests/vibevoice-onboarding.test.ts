@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { nativeVibeVoiceStreamEnabled } from "../lib/adapters/vibevoice-pcm.ts";
-import { extractTarMember } from "../lib/vibevoice/archive.ts";
+import { extractTarMember, parseTarListing } from "../lib/vibevoice/archive.ts";
 import type { VibeVoiceArtifact } from "../lib/vibevoice/manifest.ts";
 import {
 	createInstallChecklist,
@@ -54,6 +54,10 @@ function fixtures(): { artifacts: VibeVoiceArtifact[]; bodies: Map<string, strin
 	}[item.id]!])) };
 }
 
+function slash(value: string): string {
+	return value.replace(/\\/g, "/");
+}
+
 function fakeIo(bodies: Map<string, string>, calls: string[], opts?: { fail?: string; corrupt?: string }): OnboardingIo {
 	return {
 		async fetch(item, destination) {
@@ -64,6 +68,7 @@ function fakeIo(bodies: Map<string, string>, calls: string[], opts?: { fail?: st
 		},
 		async run(command, args) {
 			calls.push([command, ...args].join(" "));
+			const commandPath = slash(command);
 			if (command === "sudo" || args.includes("sudo")) return { code: 9 };
 			if (args[0] === "-m" && args[1] === "venv") {
 				const venv = args[2]!;
@@ -71,11 +76,11 @@ function fakeIo(bodies: Map<string, string>, calls: string[], opts?: { fail?: st
 				writeFileSync(join(venv, "bin", "python"), "#!/bin/sh\nexit 0\n");
 				writeFileSync(join(venv, "bin", "pip"), "#!/bin/sh\nexit 0\n");
 			}
-			if (command.endsWith("/.venv/bin/python") && args.includes("sys.prefix.endswith('.venv')")) return { code: 0 };
-			if (command.endsWith("/.venv/bin/python") && args.some((arg) => arg.includes("importlib.metadata"))) {
-				return { code: calls.some((call) => call.includes("/.venv/bin/pip install")) ? 0 : 4 };
+			if (commandPath.endsWith("/.venv/bin/python") && args.includes("sys.prefix.endswith('.venv')")) return { code: 0 };
+			if (commandPath.endsWith("/.venv/bin/python") && args.some((arg) => arg.includes("importlib.metadata"))) {
+				return { code: calls.some((call) => slash(call).includes("/.venv/bin/pip install")) ? 0 : 4 };
 			}
-			if (command.endsWith("/.venv/bin/pip")) {
+			if (commandPath.endsWith("/.venv/bin/pip")) {
 				if (opts?.fail === "pip") return { code: 1, detail: "ERROR: pip stopped\nNo matching distribution" };
 				return { code: 0 };
 			}
@@ -181,8 +186,8 @@ test("simulated install verifies hashes, uses a private venv, and selects PCM", 
 	assert.equal(marker.authorized, true);
 	const receipt = JSON.parse(readFileSync(join(target, "integrity.json"), "utf8")) as { kind?: string };
 	assert.equal(receipt.kind, "gentle-voice.vibevoice-integrity");
-	assert.equal(calls.some((call) => call.startsWith("python3 -m venv ") && call.includes(target)), true);
-	assert.equal(calls.some((call) => call.includes("/.venv/bin/pip install")), true);
+	assert.equal(calls.some((call) => call.startsWith("python3 -m venv ") && slash(call).includes(slash(target))), true);
+	assert.equal(calls.some((call) => slash(call).includes("/.venv/bin/pip install")), true);
 	assert.equal(calls.some((call) => call.startsWith("sudo")), false);
 	assert.equal(readFileSync(outside, "utf8"), "keep");
 	assert.equal(progress[0], "Installing VibeVoice...");
@@ -201,7 +206,7 @@ test("simulated install verifies hashes, uses a private venv, and selects PCM", 
 	assert.equal(lastSteps.find((step) => step.id === "weights")?.state, "completed");
 	assert.equal(lastSteps.find((step) => step.id === "python")?.state, "completed");
 	assert.equal(lastSteps.find((step) => step.id === "activate")?.state, "pending");
-	const pipAt = calls.findIndex((call) => call.includes("/.venv/bin/pip install"));
+	const pipAt = calls.findIndex((call) => slash(call).includes("/.venv/bin/pip install"));
 	assert.equal(pipAt > 0, true);
 	assert.equal(formatInstallView(createInstallChecklist().snapshot()).some((line) => line.includes("Existing components")), false);
 });
@@ -325,7 +330,7 @@ test("an interrupted install resumes without fetching a verified weight file", a
 	assert.equal(result.status, "installed");
 	assert.equal(calls.filter((call) => call === "fetch:weights").length, 0);
 	assert.equal(weightState, "reused");
-	assert.equal(calls.some((call) => call.includes("/.venv/bin/pip install")), true);
+	assert.equal(calls.some((call) => slash(call).includes("/.venv/bin/pip install")), true);
 });
 
 test("cancelling during pip leaves the install unmarked", async () => {
@@ -335,7 +340,7 @@ test("cancelling during pip leaves the install unmarked", async () => {
 	const io = fakeIo(bodies, []);
 	const original = io.run.bind(io);
 	io.run = async (command, args, signal) => {
-		if (command.endsWith("/.venv/bin/pip")) {
+		if (slash(command).endsWith("/.venv/bin/pip")) {
 			abort.abort();
 			throw new Error("cancelled");
 		}
@@ -529,6 +534,20 @@ test("explicit Piper wins over a ready VibeVoice directory", () => {
 		if (prevTts === undefined) delete process.env.GENTLE_VOICE_TTS;
 		else process.env.GENTLE_VOICE_TTS = prevTts;
 	}
+});
+
+test("tar listing accepts GNU and BSD verbose rows", () => {
+	const gnu = parseTarListing("-rw-r--r-- runner/runner 4 2026-10-21 16:04 sp/sp-Spk2_woman.pt\n");
+	assert.deepEqual(gnu, [{ type: "-", name: "sp/sp-Spk2_woman.pt" }]);
+	const bsd = parseTarListing([
+		"-rw-r--r--  0 runner staff 4 Oct 21 16:04 2026 sp/sp-Spk2_woman.pt",
+		"lrwxr-xr-x  0 runner staff 0 Oct 21 16:04 2026 sp-Spk0_woman.pt -> /etc/passwd",
+		"-rw-r--r--  0 runner staff 4 Apr 21  2020 old-voice.pt",
+	].join("\n"));
+	assert.equal(bsd[0]?.name, "sp/sp-Spk2_woman.pt");
+	assert.equal(bsd[1]?.type, "l");
+	assert.equal(bsd[1]?.name, "sp-Spk0_woman.pt");
+	assert.equal(bsd[2]?.name, "old-voice.pt");
 });
 
 test("tar extraction ignores members that climb out of the archive", async () => {

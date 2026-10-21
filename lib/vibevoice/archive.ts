@@ -19,11 +19,13 @@ interface ListedMember {
 	readonly name: string;
 }
 
-function runTar(args: readonly string[], signal?: AbortSignal): Promise<{ code: number; stdout: string }> {
+function runTar(args: readonly string[], signal?: AbortSignal): Promise<{ code: number; stdout: string; stderr: string }> {
 	return new Promise((resolveRun, reject) => {
 		const child = spawn("tar", [...args], { shell: false, stdio: ["ignore", "pipe", "pipe"] });
-		const chunks: Buffer[] = [];
-		child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+		const out: Buffer[] = [];
+		const err: Buffer[] = [];
+		child.stdout.on("data", (chunk: Buffer) => out.push(chunk));
+		child.stderr.on("data", (chunk: Buffer) => err.push(chunk));
 		const onAbort = () => child.kill("SIGTERM");
 		signal?.addEventListener("abort", onAbort, { once: true });
 		child.once("error", (error) => {
@@ -32,18 +34,24 @@ function runTar(args: readonly string[], signal?: AbortSignal): Promise<{ code: 
 		});
 		child.once("exit", (code) => {
 			signal?.removeEventListener("abort", onAbort);
-			resolveRun({ code: code ?? 1, stdout: Buffer.concat(chunks).toString("utf8") });
+			resolveRun({
+				code: code ?? 1,
+				stdout: Buffer.concat(out).toString("utf8"),
+				stderr: Buffer.concat(err).toString("utf8"),
+			});
 		});
 	});
 }
 
-function parseListing(stdout: string): ListedMember[] {
+const GNU_TAR_LISTING = /^([a-zA-Z-])\S*\s+\S+\s+\d+\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?\s+(.+)$/;
+const BSD_TAR_LISTING = /^([a-zA-Z-])\S*\s+\d+\s+\S+\s+\S+\s+\d+\s+[A-Z][a-z]{2}\s+\d{1,2}\s+(?:\d{2}:\d{2}(?:\s+\d{4})?|\d{4})\s+(.+)$/;
+
+/** Verbose `tar -tv` rows. GNU date order and BSD libarchive order are both accepted. */
+export function parseTarListing(stdout: string): ListedMember[] {
 	const members: ListedMember[] = [];
 	for (const line of stdout.split(/\r?\n/)) {
 		if (!line.trim()) continue;
-		const match = line.match(
-			/^([a-zA-Z-])\S*\s+\S+\s+\d+\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?\s+(.+)$/,
-		);
+		const match = line.match(GNU_TAR_LISTING) ?? line.match(BSD_TAR_LISTING);
 		if (!match) continue;
 		const name = match[2]!.replace(/ -> .*$/, "");
 		members.push({ type: match[1]!, name });
@@ -68,7 +76,12 @@ function matchesQuery(entry: string, query: ArchiveMemberQuery): boolean {
 async function listMembers(archive: string, signal?: AbortSignal): Promise<ListedMember[]> {
 	const listed = await runTar(["-tvzf", archive], signal);
 	if (listed.code !== 0) throw new Error("archive_list_failed");
-	return parseListing(listed.stdout);
+	const fromStdout = parseTarListing(listed.stdout);
+	if (fromStdout.length > 0) return fromStdout;
+	const fromStderr = parseTarListing(listed.stderr);
+	if (fromStderr.length > 0) return fromStderr;
+	if (listed.stdout.trim() || listed.stderr.trim()) throw new Error("archive_list_unparsed");
+	return [];
 }
 
 function assertNoSymlink(member: ListedMember): void {

@@ -76,6 +76,10 @@ async function isExecutable(path: string): Promise<boolean> {
 	}
 }
 
+function specifiedBinary(path: string | undefined): path is string {
+	return typeof path === "string" && (path.includes("/") || path.includes("\\"));
+}
+
 export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {}): CaptureAdapter {
 	const pwRecordPath = options.pwRecordPath ?? "pw-record";
 	const sampleRateHz = options.sampleRateHz ?? 16_000;
@@ -85,16 +89,13 @@ export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {
 	return {
 		id: "linux-pipewire-capture",
 		async availability(): Promise<AdapterAvailability> {
-			if (options.pwRecordPath?.includes("/")) {
+			if (specifiedBinary(options.pwRecordPath)) {
 				return await isExecutable(pwRecordPath)
 					? { status: "ready", detail: pwRecordPath }
 					: { status: "unavailable", reason: "pw_record_missing" };
 			}
 			if (await isExecutable("/usr/bin/pw-record")) {
 				return { status: "ready", detail: "/usr/bin/pw-record" };
-			}
-			if (pwRecordPath.includes("/") && (await isExecutable(pwRecordPath))) {
-				return { status: "ready", detail: pwRecordPath };
 			}
 			return { status: "unavailable", reason: "pw_record_missing" };
 		},
@@ -113,7 +114,7 @@ export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {
 				throw new Error(`capture unavailable: ${avail.reason}`);
 			}
 
-			const bin = avail.detail?.startsWith("/") ? avail.detail : "/usr/bin/pw-record";
+			const bin = specifiedBinary(avail.detail) ? avail.detail : "/usr/bin/pw-record";
 			const id = `pw-${randomUUID()}`;
 			const pcmChunks: Buffer[] = [];
 			let totalBytes = 0;

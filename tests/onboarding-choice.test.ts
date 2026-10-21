@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { resolveVibeVoiceHome } from "../lib/adapters/vibevoice-tts.ts";
 import { runFirstRunPreparation } from "../lib/runtime/first-run.ts";
-import { readTtsEnginePreference } from "../lib/vibevoice/tts-preference.ts";
+import { readTtsEnginePreference, resolveVoiceHomeForTts } from "../lib/vibevoice/tts-preference.ts";
 import {
 	classifyVibeVoiceCompatibility,
 	envPreferringPersistentHome,
@@ -18,6 +18,7 @@ import {
 	formatSpeechRecognitionPrompt,
 	formatTemporaryLocationPrompt,
 	recommendTts,
+	NOT_SUPPORTED_LABEL,
 	RECOMMENDED_FOR_SYSTEM,
 	vibevoiceInstallState,
 	type EngineInstallState,
@@ -243,7 +244,7 @@ test("a tmpfs override does not create that directory when the fallback is also 
 		select: async () => {
 			throw new Error("tmpfs fallback should not ask to install");
 		},
-	}, env);
+	}, env, { filesystemOf: () => "tmpfs" });
 	assert.equal(snap.status, "needs_manual");
 	assert.match(notices.join("\n"), /tmpfs/);
 	assert.equal(existsSync(override), false);
@@ -251,18 +252,34 @@ test("a tmpfs override does not create that directory when the fallback is also 
 });
 
 test("XDG and an explicit home decide the engine directory", () => {
-	const custom = resolveVibeVoiceHome({
-		HOME: "/home/example",
-		XDG_DATA_HOME: "/home/example/.var/share",
-	});
-	assert.equal(custom, "/home/example/.var/share/gentle-voice/vibevoice");
 	const fallback = resolveVibeVoiceHome({ HOME: "/home/example" });
-	assert.equal(fallback, "/home/example/.local/share/gentle-voice/vibevoice");
+	if (process.platform === "linux") {
+		const custom = resolveVibeVoiceHome({
+			HOME: "/home/example",
+			XDG_DATA_HOME: "/home/example/.var/share",
+		});
+		assert.equal(custom, "/home/example/.var/share/gentle-voice/vibevoice");
+		assert.equal(fallback, "/home/example/.local/share/gentle-voice/vibevoice");
+	} else if (process.platform === "darwin") {
+		const home = join("/home/example", "Library", "Application Support", "gentle-voice", "vibevoice");
+		assert.equal(resolveVibeVoiceHome({
+			HOME: "/home/example",
+			XDG_DATA_HOME: "/home/example/.var/share",
+		}), home);
+		assert.equal(fallback, home);
+	} else {
+		const home = join("/home/example", "AppData", "Local", "gentle-voice", "vibevoice");
+		assert.equal(resolveVibeVoiceHome({
+			HOME: "/home/example",
+			XDG_DATA_HOME: "/home/example/.var/share",
+		}), home);
+		assert.equal(fallback, home);
+	}
 	const explicit = resolveVibeVoiceHome({
 		HOME: "/home/example",
 		GENTLE_VOICE_HOME: "/srv/voice-data",
 	});
-	assert.equal(explicit, "/srv/voice-data/vibevoice");
+	assert.equal(explicit, join("/srv/voice-data", "vibevoice"));
 	const prompt = formatTemporaryLocationPrompt("/tmp/session/gentle-voice", fallback);
 	assert.match(prompt, /tmpfs/);
 	assert.match(prompt, /left as you set them/);
@@ -281,6 +298,7 @@ test("a clean home asks for an engine and downloads nothing when consent is refu
 	const titles: string[] = [];
 	const confirms: string[] = [];
 	let picked = "";
+	const linux64 = process.platform === "linux" && process.arch === "x64";
 	try {
 		const env = {
 			HOME: root,
@@ -296,9 +314,15 @@ test("a clean home asks for an engine and downloads nothing when consent is refu
 				assert.equal(options.some((option) => option.startsWith("Finish")), false);
 				assert.equal(options.some((option) => option.startsWith("Install")), false);
 				assert.equal(options.some((option) => option.startsWith("Use ")), false);
-				assert.equal(options.filter((option) => option.includes(RECOMMENDED_FOR_SYSTEM)).length, 1);
-				picked = options[0] ?? "";
-				return options[0];
+				const recommended = options.filter((option) => option.includes(RECOMMENDED_FOR_SYSTEM));
+				if (linux64) {
+					assert.equal(recommended.length, 1);
+					picked = options[0] ?? "";
+					return options[0];
+				}
+				assert.equal(recommended.length, 0);
+				assert.equal(options.some((option) => option.includes(NOT_SUPPORTED_LABEL)), true);
+				return ENGINE_SKIP;
 			},
 			confirm: async (title) => {
 				confirms.push(title);
@@ -308,13 +332,15 @@ test("a clean home asks for an engine and downloads nothing when consent is refu
 		assert.deepEqual(titles, ["Choose your voice engine"]);
 		assert.equal(confirms.includes("Install speech recognition?"), true);
 		assert.ok(confirms.indexOf("Silero VAD") > confirms.indexOf("Install speech recognition?"));
-		assert.equal(confirms.some((title) => title.startsWith("Install VibeVoice") || title.startsWith("Finish VibeVoice") || title === "Install Piper?"), true);
+		const askedForEngine = confirms.some((title) => title.startsWith("Install VibeVoice") || title.startsWith("Finish VibeVoice") || title === "Install Piper?");
+		assert.equal(askedForEngine, linux64);
 		const names = existsSync(join(root, "share"))
 			? readdirSync(join(root, "share"), { recursive: true }).map(String)
 			: [];
 		assert.equal(names.some((name) => name.endsWith(".safetensors") || name.endsWith(".onnx")), false);
-		const saved = readTtsEnginePreference(join(root, "share", "gentle-voice"));
-		if (picked.startsWith(ENGINE_VIBEVOICE)) assert.equal(saved, "vibevoice");
+		const saved = readTtsEnginePreference(resolveVoiceHomeForTts(env));
+		if (!linux64) assert.equal(saved, "unset");
+		else if (picked.startsWith(ENGINE_VIBEVOICE)) assert.equal(saved, "vibevoice");
 		else if (picked.startsWith(ENGINE_PIPER)) assert.equal(saved, "piper");
 		else assert.equal(saved, "unset");
 	} finally {

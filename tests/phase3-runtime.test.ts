@@ -98,7 +98,10 @@ test("3.1 a ready VibeVoice engine does not ask to download Piper", async () => 
 	await writeFile(join(engine, "voices", "sp-Spk0_woman.pt"), "voice");
 	await writeFile(join(engine, "INSTALL_PENDING.json"), JSON.stringify({ authorized: true, status: "installed" }));
 	writeTtsEnginePreference(root, "vibevoice");
-	for (const relative of ["bin/whisper-cli", "models/whisper/ggml-base-q5_1.bin"]) {
+	for (const relative of [
+		process.platform === "win32" ? "bin/whisper-cli.exe" : "bin/whisper-cli",
+		"models/whisper/ggml-base-q5_1.bin",
+	]) {
 		const path = join(root, relative);
 		await mkdir(join(path, ".."), { recursive: true });
 		await writeFile(path, "present");
@@ -108,7 +111,12 @@ test("3.1 a ready VibeVoice engine does not ask to download Piper", async () => 
 		GENTLE_VOICE_VIBEVOICE_HOME: engine,
 		HOME: root,
 	});
-	assert.equal(plan.status, "ready");
+	if (process.platform === "darwin") {
+		assert.equal(plan.status, "partial");
+		assert.match(plan.summary, /macOS/);
+	} else {
+		assert.equal(plan.status, "ready");
+	}
 	assert.equal(plan.missing.some((art) => art.id.startsWith("piper")), false);
 	assert.equal(plan.summary.includes("Ready to download"), false);
 });

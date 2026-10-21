@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { resolveLabVoiceAdapters } from "../lib/adapters/lab-resolve.ts";
 import {
@@ -51,9 +51,10 @@ function fakeInstall(home: string, opts?: { modelBytes?: number; nested?: boolea
 
 test("worker model path is the directory that contains the weights", () => {
 	const dir = "/var/lib/gentle-voice/vibevoice/models/VibeVoice-Realtime-0.5B";
+	const weights = join(dir, "model.safetensors");
 	assert.equal(vibeVoiceWorkerModelDir(dir), dir);
-	assert.equal(vibeVoiceWorkerModelDir(join(dir, "model.safetensors")), dir);
-	assert.notEqual(vibeVoiceWorkerModelDir(dir), join(dir, ".."));
+	assert.equal(vibeVoiceWorkerModelDir(weights), dirname(weights));
+	assert.notEqual(vibeVoiceWorkerModelDir(dir), dirname(dir));
 });
 
 test("probe: nested model dir path is accepted when size matches", () => {

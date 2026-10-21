@@ -24,6 +24,7 @@ Prepared, not published. npm `latest` remains `0.1.4` until publication is expli
 - Weights, voices, and the VibeVoice tree are not in the npm tarball.
 - A clean VibeVoice install on Linux x64 was confirmed in use, including playback. Weights stay out of the npm tarball. The Spanish voice file is taken from the VibeVoice code archive, not from the weights repo.
 - Windows, macOS, CPU, and non-NVIDIA GPUs are not a tested VibeVoice path.
+- CI runs the suite on Ubuntu, macOS, and Windows. PipeWire capture and a tmpfs install refusal stay Linux behavior. macOS and Windows are still not supported audio hosts.
 
 ## [0.1.4] — 2026-10-20
 

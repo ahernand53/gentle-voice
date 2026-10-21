@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
 import { EventEmitter } from "node:events";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
@@ -19,6 +22,10 @@ test("capture recovers from async Silero failure, ends the turn and releases the
 	t.mock.method(childProcess, "spawn", () => child);
 	syncBuiltinESMExports();
 	const abort = new AbortController();
+	const root = mkdtempSync(join(tmpdir(), "gv-pw-record-"));
+	const pwRecord = join(root, "pw-record");
+	writeFileSync(pwRecord, "#!/bin/sh\nexit 0\n");
+	chmodSync(pwRecord, 0o755);
 	try {
 		const vad = createSileroVadFromRunner({ runFrame: async () => { throw new Error("ORT failed"); } });
 		let disposed = 0;
@@ -28,6 +35,7 @@ test("capture recovers from async Silero failure, ends the turn and releases the
 		let finish!: () => void;
 		const ended = new Promise<void>(resolve => { finish = resolve; });
 		const capture = createPipewireCaptureAdapter({
+			pwRecordPath: pwRecord,
 			vadEngine: vad,
 			vad: { silenceHangMs: 100, postRollMs: 20, maxIntraPauseMs: 40 },
 			onVadResolved: info => backends.push(info.backend),
@@ -50,6 +58,7 @@ test("capture recovers from async Silero failure, ends the turn and releases the
 		assert.ok(audio.bytes.length > 44);
 	} finally {
 		abort.abort();
+		rmSync(root, { recursive: true, force: true });
 		t.mock.restoreAll();
 		syncBuiltinESMExports();
 	}

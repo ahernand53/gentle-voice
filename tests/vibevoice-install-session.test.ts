@@ -27,6 +27,10 @@ function artifact(id: VibeVoiceArtifact["id"], relativePath: string, body: strin
 	};
 }
 
+function slash(value: string): string {
+	return value.replace(/\\/g, "/");
+}
+
 function ioWithHeldPip(release: { go: () => void }, signalBox: { signal?: AbortSignal }): OnboardingIo {
 	let depsReady = false;
 	return {
@@ -43,7 +47,7 @@ function ioWithHeldPip(release: { go: () => void }, signalBox: { signal?: AbortS
 				return { code: 0 };
 			}
 			if (args.some((arg) => arg.includes("importlib.metadata"))) return { code: depsReady ? 0 : 4 };
-			if (command.endsWith("/.venv/bin/pip")) {
+			if (slash(command).endsWith("/.venv/bin/pip")) {
 				await new Promise<void>((resolve, reject) => {
 					const finish = (): void => resolve();
 					release.go = () => {

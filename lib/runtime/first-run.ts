@@ -292,21 +292,31 @@ async function chooseOption(
 	return SKIP_TTS;
 }
 
+function filesystemKind(directory: string): string | undefined {
+	return probeVibeVoiceHardware(directory).filesystem;
+}
+
+export interface FirstRunPreparationOptions {
+	/** Test seam. Production reads `findmnt`. */
+	readonly filesystemOf?: (directory: string) => string | undefined;
+}
+
 async function chooseInstallEnv(
 	host: FirstRunHost,
 	env: NodeJS.ProcessEnv,
+	readFilesystem: (directory: string) => string | undefined,
 ): Promise<{ env: NodeJS.ProcessEnv; refuseDownloads: boolean }> {
 	const current = resolveRuntimeLayout(env).dataDir;
-	const currentFs = probeVibeVoiceHardware(current).filesystem;
+	const currentFs = readFilesystem(current);
 	if (currentFs !== "tmpfs") return { env, refuseDownloads: false };
 	let persistentEnv = envPreferringPersistentHome(env, false);
 	let persistent = resolveRuntimeLayout(persistentEnv).dataDir;
-	if (probeVibeVoiceHardware(persistent).filesystem === "tmpfs") {
+	if (readFilesystem(persistent) === "tmpfs") {
 		persistentEnv = envPreferringPersistentHome(env, true);
 		persistent = resolveRuntimeLayout(persistentEnv).dataDir;
 	}
 	const prompt = formatTemporaryLocationPrompt(current, persistent);
-	if (probeVibeVoiceHardware(persistent).filesystem === "tmpfs") {
+	if (readFilesystem(persistent) === "tmpfs") {
 		host.notify(`${prompt}\nThe persistent default is also on tmpfs. No speech download will start.`, "warning");
 		return { env, refuseDownloads: true };
 	}
@@ -526,8 +536,9 @@ async function announceRuntimeArtifacts(
 export async function runFirstRunPreparation(
 	host: FirstRunHost,
 	env: NodeJS.ProcessEnv = process.env,
+	options: FirstRunPreparationOptions = {},
 ): Promise<ReadinessSnapshot> {
-	const decision = await chooseInstallEnv(host, env);
+	const decision = await chooseInstallEnv(host, env, options.filesystemOf ?? filesystemKind);
 	if (decision.refuseDownloads) {
 		host.notify("The install location is on tmpfs. No speech download was started.", "warning");
 		const blocked = await buildFirstRunPlan(envPreferringPersistentHome(env, true));
