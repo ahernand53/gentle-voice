@@ -2,6 +2,12 @@
 
 All notable changes to Gentle Voice are documented here.
 
+## [0.1.7] — 2026-10-21
+
+### Added
+
+- An existing Gentle AI `profiles.json` receives an empty `voice-ai` role on every profile. The role has no model and no thinking. Those are set in `/gentle:models`. A missing profiles file is not created. `/gentle:voice add voice-ai` performs the same add. Pi and an isolated Gentle Shell each write only their own profiles file.
+
 ## [0.1.6] — 2026-10-21
 
 ### Fixed

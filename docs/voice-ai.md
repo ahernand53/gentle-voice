@@ -28,9 +28,12 @@ Narration stays `after_settle`. Pi `text_delta` is provisional: tools, thinking,
 ## Commands
 
 ```text
+/gentle:voice add voice-ai          # empty voice-ai role on every existing profile; no model, no thinking
 /gentle:voice voice-ai on|off|status
 /gentle:voice voice-ai-profile   # lab only: seed OpenSource.voice-ai → MiMo (does not change orchestrator)
 ```
+
+`/gentle:voice add voice-ai` does not create `profiles.json`. If that file is missing, create a profile with `/gentle:profiles` and run the command again. Model and effort are set in `/gentle:models`. When the file already exists, the first session of an install adds the same empty role.
 
 The extra call is a second model request, billed apart from the orchestrator. `voice-ai` is the role name, not a model name. MiMo is one model that can fill it. Input is the assistant text clipped to 8000 characters. The default timeout is 25 seconds. One lab observation with MiMo was 363 input tokens and 9 output tokens. That figure is not a quota and it does not mean the model is free. Off, an invalid role, a provider error, or a timeout skips the extra call and uses the deterministic renderer. The written reply stays as the orchestrator wrote it.
 

@@ -26,6 +26,7 @@ export const VOICE_SUBCOMMANDS: readonly VoiceCommandName[] = [
 	"purge",
 	"stream",
 	"voice-ai",
+	"add",
 	"barge-in",
 	"tts",
 	"vibevoice-setup",
@@ -66,7 +67,7 @@ export function parseVoiceArgs(raw: string): ParsedVoiceArgs {
 			return {
 				command: "",
 				rest: trimmed,
-				error: `Unknown subcommand "${head}". Try: on|off|listen|stop|mute|status|config|setup|storage|send|draft|edit|converse|purge|stream|voice-ai|barge-in|tts|vibevoice-setup`,
+				error: `Unknown subcommand "${head}". Try: on|off|listen|stop|mute|status|config|setup|storage|send|draft|edit|converse|purge|stream|voice-ai|add|barge-in|tts|vibevoice-setup`,
 			};
 		}
 		return {
@@ -81,7 +82,7 @@ export function parseVoiceArgs(raw: string): ParsedVoiceArgs {
 		return {
 			command: "",
 			rest: trimmed,
-			error: `Unknown subcommand "${head}". Try: on|off|listen|stop|mute|status|config|setup|storage|send|draft|edit|converse|purge|stream|voice-ai|barge-in|tts|vibevoice-setup`,
+			error: `Unknown subcommand "${head}". Try: on|off|listen|stop|mute|status|config|setup|storage|send|draft|edit|converse|purge|stream|voice-ai|add|barge-in|tts|vibevoice-setup`,
 		};
 	}
 	return { command, rest: tail.join(" ") };
@@ -117,6 +118,7 @@ export function voiceHelpText(options?: { includeLab?: boolean }): string {
 		"  /gentle:voice purge --keep-models   Same plan but preserve models/voices",
 		"  /gentle:voice stream auto|pcm|wav  VibeVoice playback. auto uses PCM when supported",
 		"  /gentle:voice voice-ai on|off|status  Narration model (does not change the written reply)",
+		"  /gentle:voice add voice-ai   Add an empty voice-ai role to every existing profile",
 		"  /gentle:voice barge-in on|off|status  Interrupt playback by speaking",
 		"  /gentle:voice tts piper|vibevoice|kokoro  Select the TTS engine for this session",
 		"  /gentle:voice vibevoice-setup  Install VibeVoice after confirm. `plan` prints the terms. `cancel` stops the running install",
