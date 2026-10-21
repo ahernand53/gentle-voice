@@ -43,6 +43,42 @@ test("vibevoice plan blocks a machine without NVIDIA or disk", () => {
 	});
 	assert.equal(small.status, "blocked");
 	assert.deepEqual(small.reasons, ["vram_below_4gb", "disk_below_12gb"]);
+	const tmpfs = planVibeVoiceInstall({
+		targetDir: "/var/tmp/not-used",
+		hardware: { nvidiaPresent: true, vramTotalMb: 8192, freeDiskMb: 20000, filesystem: "tmpfs" },
+		alreadyInstalled: false,
+	});
+	assert.equal(tmpfs.status, "blocked");
+	assert.equal(tmpfs.reasons.includes("tmpfs_destination"), true);
+	const allowed = planVibeVoiceInstall({
+		targetDir: "/var/tmp/not-used",
+		hardware: { nvidiaPresent: true, vramTotalMb: 8192, freeDiskMb: 20000, filesystem: "tmpfs" },
+		alreadyInstalled: false,
+		allowTmpfs: true,
+	});
+	assert.equal(allowed.status, "needs_consent");
+	const probeFailed = planVibeVoiceInstall({
+		targetDir: target,
+		hardware: { nvidiaPresent: false, probe: "unavailable", freeDiskMb: 20_000, diskKnown: true },
+		alreadyInstalled: false,
+	});
+	assert.equal(probeFailed.status, "needs_consent");
+	assert.equal(probeFailed.reasons.includes("gpu_required"), false);
+	const diskUnread = planVibeVoiceInstall({
+		targetDir: target,
+		hardware: { nvidiaPresent: true, probe: "ok", vramTotalMb: 8192, freeDiskMb: 0, diskKnown: false },
+		alreadyInstalled: false,
+	});
+	assert.equal(diskUnread.status, "needs_consent");
+	assert.equal(diskUnread.reasons.includes("disk_below_12gb"), false);
+	const belowRecommended = planVibeVoiceInstall({
+		targetDir: target,
+		hardware: { nvidiaPresent: true, probe: "ok", vramTotalMb: 8192, freeDiskMb: 13_000, diskKnown: true },
+		alreadyInstalled: false,
+	});
+	assert.equal(belowRecommended.status, "needs_consent");
+	assert.equal(belowRecommended.reasons.includes("disk_below_recommended"), true);
+	assert.equal(belowRecommended.reasons.includes("disk_below_12gb"), false);
 });
 
 test("vibevoice execute refuses without consent and never runs against an existing engine", async () => {

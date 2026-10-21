@@ -228,3 +228,21 @@ test("P0: fragment log records synth/play lifecycle ids", async () => {
 	assert.ok(events.some((e) => e.startsWith("play_start:u1")));
 	assert.ok(events.some((e) => e.startsWith("play_done:u1")));
 });
+
+test("stream synthesis failure reaches the user instead of silently dropping the voice reply", async () => {
+	const errors: string[] = [];
+	const session = new VoiceSession({
+		config: { ...convoConfig(), behavior: { ...convoConfig().behavior, fluentConversation: false } },
+		capture: createStubCaptureAdapter(), stt: createStubSttAdapter(),
+		tts: { id: "test-tts", availability: async () => ({ status: "ready" as const }), synthesize: async () => { throw new Error("engine cannot synthesize"); } },
+		playback: createStubPlaybackAdapter(),
+		notify: (message, level) => { if (level === "error") errors.push(message); },
+	});
+	await session.submitPending("Hola");
+	session.beginStreamSpeak();
+	session.onMessageUpdate({ assistantMessageEvent: { type: "text_delta", delta: "Hola. Estoy aquí para ayudarte. " } });
+	await new Promise(resolve => setTimeout(resolve, 30));
+	assert.equal(errors.length, 1);
+	assert.match(errors[0]!, /engine cannot synthesize/);
+	session.cancelVoiceAudio("test");
+});

@@ -45,7 +45,7 @@ test("widget line always inserts gap between glyph and Gentle Voice", () => {
 	);
 	assert.ok(line);
 	assert.equal(line!.startsWith(`🎙${VOICE_GLYPH_GAP}${VOICE_BRAND}`), true);
-	assert.match(line!, /^🎙 Gentle Voice │ LISTENING │ 🔊 ON$/);
+	assert.match(line!, /^🎙 {2}Gentle Voice │ LISTENING │ 🔊 ON$/);
 	assert.doesNotMatch(line!, /^🎙Gentle/);
 });
 

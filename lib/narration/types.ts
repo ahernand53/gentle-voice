@@ -30,7 +30,8 @@ export interface NarratorModelRef {
 
 /**
  * Resolution of who narrates. Distinct from "which model was invoked".
- * Case C (role_invalid) must NOT silently become orchestrator.
+ * An invalid model id stays role_invalid. A role with no model uses the orchestrator
+ * and sets note "voice-ai has no model configured" (one warning, not a silent swap).
  */
 export type NarratorResolution =
 	| {

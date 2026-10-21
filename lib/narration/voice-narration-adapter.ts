@@ -57,6 +57,8 @@ export interface CreateVoiceNarrationAdapterOptions {
 	readonly env?: NodeJS.ProcessEnv;
 	/** Inject resolution for tests. */
 	readonly resolveOverride?: (input: NarrateInput) => NarratorResolution;
+	readonly hostKind?: string | (() => string | undefined);
+	readonly onNotice?: (message: string) => void;
 }
 
 function raceTimeout<T>(
@@ -99,6 +101,7 @@ export function createVoiceNarrationAdapter(
 	const now = options.now ?? (() => Date.now());
 	const env = options.env ?? process.env;
 	let diag: NarrationDiagnostics = { enabled: readCfg().enabled };
+	let announcedNoModel = false;
 
 	const resolveProfiles = (
 		input: Pick<NarrateInput, "sessionId" | "activeModel" | "activeThinking">,
@@ -107,6 +110,7 @@ export function createVoiceNarrationAdapter(
 			return options.resolveOverride(input as NarrateInput);
 		}
 		const cfg = readCfg();
+		const hostKind = typeof options.hostKind === "function" ? options.hostKind() : options.hostKind;
 		return resolveNarratorFromProfiles({
 			roleName: cfg.role,
 			sessionId: input.sessionId,
@@ -114,6 +118,7 @@ export function createVoiceNarrationAdapter(
 			activeThinking: input.activeThinking,
 			...(cfg.configHome ? { configHome: cfg.configHome } : {}),
 			...(cfg.preferredProfile ? { preferredProfile: cfg.preferredProfile } : {}),
+			...(hostKind ? { hostKind } : {}),
 			env,
 		});
 	};
@@ -132,6 +137,10 @@ export function createVoiceNarrationAdapter(
 		diag = { ...diag, enabled: readCfg().enabled, ...partial };
 	};
 
+	const noticeFallback = (reason: string): void => {
+		options.onNotice?.(`Voice AI fallback: ${reason}. Speaking the written reply.`);
+	};
+
 	return {
 		resolveNarrator,
 		/** Profile/role lookup even when narration is disabled (status must not show Profile none). */
@@ -142,6 +151,14 @@ export function createVoiceNarrationAdapter(
 			const cfg = readCfg();
 			const started = now();
 			const resolution = resolveNarrator(input);
+			if (
+				!announcedNoModel
+				&& resolution.status === "ready"
+				&& resolution.note === "voice-ai has no model configured"
+			) {
+				announcedNoModel = true;
+				options.onNotice?.("Voice AI: No dedicated model configured. Using orchestrator.");
+			}
 			updateDiag({
 				narratorSource: resolution.source,
 				profileName:
@@ -196,13 +213,14 @@ export function createVoiceNarrationAdapter(
 				};
 			}
 
-			// Case C — invalid role → deterministic (do not silently use orchestrator).
+			// Invalid narrator config → deterministic. Do not swap models quietly.
 			if (resolution.status === "role_invalid") {
 				updateDiag({
 					lastPath: "deterministic",
 					lastReason: resolution.reason,
 					narratorRef: undefined,
 				});
+				noticeFallback(resolution.reason);
 				return {
 					ok: true,
 					path: "deterministic",
@@ -215,6 +233,7 @@ export function createVoiceNarrationAdapter(
 
 			if (resolution.status !== "ready") {
 				updateDiag({ lastPath: "deterministic", lastReason: resolution.status });
+				noticeFallback(resolution.status);
 				return {
 					ok: true,
 					path: "deterministic",
@@ -242,6 +261,7 @@ export function createVoiceNarrationAdapter(
 			const host = options.getHost?.() ?? options.host;
 			if (!host) {
 				updateDiag({ lastPath: "deterministic", lastReason: "no_model_host" });
+				noticeFallback("no_model_host");
 				return {
 					ok: true,
 					path: "deterministic",
@@ -263,6 +283,7 @@ export function createVoiceNarrationAdapter(
 					lastPath: "deterministic",
 					lastReason: `model_not_found:${ready.model.ref}`,
 				});
+				noticeFallback(`model_not_found:${ready.model.ref}`);
 				return {
 					ok: true,
 					path: "deterministic",
@@ -285,6 +306,7 @@ export function createVoiceNarrationAdapter(
 					lastPath: "deterministic",
 					lastReason: `auth_missing:${ready.model.ref}`,
 				});
+				noticeFallback(`auth_missing:${ready.model.ref}`);
 				return {
 					ok: true,
 					path: "deterministic",
@@ -338,6 +360,7 @@ export function createVoiceNarrationAdapter(
 				const spoken = extractCompletionText(completion).trim();
 				if (!spoken) {
 					updateDiag({ lastPath: "deterministic", lastReason: "empty_llm" });
+					noticeFallback("empty_llm_response");
 					return {
 						ok: true,
 						path: "deterministic",
@@ -355,6 +378,7 @@ export function createVoiceNarrationAdapter(
 						lastReason: "fidelity_fail",
 						lastFidelityOk: false,
 					});
+					noticeFallback(`fidelity_fail:${fidelity.notes[0] ?? "check"}`);
 					return {
 						ok: true,
 						path: "deterministic",
@@ -417,6 +441,7 @@ export function createVoiceNarrationAdapter(
 				if (name === "TimeoutError" || /timeout/i.test(msg)) {
 					// Timeout → deterministic Speech Renderer (not Esc cancel).
 					updateDiag({ lastPath: "deterministic", lastReason: "timeout" });
+					noticeFallback("timeout");
 					return {
 						ok: true,
 						path: "deterministic",
@@ -427,6 +452,7 @@ export function createVoiceNarrationAdapter(
 					};
 				}
 				updateDiag({ lastPath: "deterministic", lastReason: `api_error:${msg.slice(0, 80)}` });
+				noticeFallback(`api_error:${msg.slice(0, 120)}`);
 				return {
 					ok: true,
 					path: "deterministic",

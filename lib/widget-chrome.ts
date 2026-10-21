@@ -20,6 +20,7 @@ export type VoiceChromeActivity =
 	| "SPEECH_DETECTED"
 	| "TRANSCRIBING"
 	| "WORKING"
+	| "NARRATING"
 	| "VOICE_LOADING"
 	| "SYNTHESIZING"
 	| "SPEAKING"
@@ -57,6 +58,8 @@ export interface VoiceChromeVisual {
 	 * decoding = whisper busy; no stale words — neutral marker only
 	 */
 	readonly transcriptPreviewKind?: "partial" | "final" | "decoding";
+	/** Second LLM call is preparing speakable text. Written reply is already visible. */
+	readonly narrating?: boolean;
 }
 
 export function chromeActivityFromPhase(phase: VoicePhase): VoiceChromeActivity {
@@ -103,6 +106,8 @@ export function resolveChromeActivity(
 		if (speakStage === "synthesizing") return "SYNTHESIZING";
 		if (speakStage === "speaking" || state.phase === "speaking") return "SPEAKING";
 	}
+
+	if (state.phase === "awaiting_agent" && visual?.narrating) return "NARRATING";
 
 	if (state.phase === "listening") {
 		// LISTENING only when mic is actually producing samples.
@@ -164,7 +169,7 @@ function renderWaveOrActivity(
 	if (!visual) return undefined;
 	if (state.muted) return undefined;
 
-	if (activity === "SYNTHESIZING" || activity === "VOICE_LOADING") {
+	if (activity === "SYNTHESIZING" || activity === "VOICE_LOADING" || activity === "NARRATING") {
 		return "⋯";
 	}
 

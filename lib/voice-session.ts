@@ -1,3 +1,4 @@
+import { VibeVoiceWorkerStartupError } from "./adapters/vibevoice-tts.ts";
 /**
  * Session controller: wires state machine + adapters + cancellation.
  * Phase 0 uses stubs; no real Pi agent loop required for unit tests.
@@ -30,7 +31,7 @@ import {
 	type SttCorrectionResult,
 	type SttCorrectionRule,
 } from "./stt/corrections.ts";
-import { gateUtteranceForAutoSubmit } from "./stt/utterance-gate.ts";
+import { formatNoSpeechDetail, gateUtteranceForAutoSubmit } from "./stt/utterance-gate.ts";
 import {
 	createDisabledIncrementalStt,
 	createIncrementalSttController,
@@ -54,6 +55,13 @@ import {
 } from "./tts/sentence-assembler.ts";
 import { StreamSpeakQueue, type StreamSpeakPipeline } from "./tts/stream-speak-queue.ts";
 import { createBargeGate, rmsS16le } from "./barge-in/gate.ts";
+import { voiceInterruptWindow } from "./barge-in/window.ts";
+import {
+	bargeTranscriptSubmittable,
+	createBargeTranscript,
+	type BargeTranscript,
+} from "./barge-in/transcript-window.ts";
+import { pcmS16leToWav } from "./adapters/wav.ts";
 import { VisualMeter } from "./visual/visual-meter.ts";
 import type { VoiceChromeVisual } from "./widget-chrome.ts";
 
@@ -128,7 +136,11 @@ export class VoiceSession {
 	#noticeAbort: AbortController | undefined;
 	#bargeLatched = false;
 	#bargeGate: ReturnType<typeof createBargeGate> | undefined;
+	#bargeTranscript: BargeTranscript | undefined;
+	#bargeSampleRateHz = 16_000;
 	#bargeStartedAt = 0;
+	#lastNarrationMs: number | undefined;
+	#lastSynthToPlaybackMs: number | undefined;
 	#bargeTrace: string[] = [];
 	#bargeLastReason = "";
 	#bargeFrames = 0;
@@ -160,6 +172,7 @@ export class VoiceSession {
 	#lastSubmitTurnId = "";
 	#lastTtsEngineId = "";
 	#lastTtsFallbackReason = "";
+	#streamErrorReported = false;
 	/** Mic producing PCM (false while ARMING). */
 	#micReady = false;
 	#listenDiag: ListenCycleDiag = { micReady: false };
@@ -170,6 +183,11 @@ export class VoiceSession {
 			if (event.type === "drop" || event.type === "cancel") {
 				const reason = event.type === "drop" ? event.dropReason : `cancel pending=${event.pending}`;
 				this.#labDiagLine(`stream_frag ${event.type} ${"unitId" in event ? event.unitId : ""} ${reason}`);
+				if (event.type === "drop" && /^(synth|play):/.test(reason)
+					&& !/^(synth|play):(abort|epoch)/.test(reason) && !this.#streamErrorReported) {
+					this.#streamErrorReported = true;
+					this.deps.notify?.(`Voice reply failed: ${reason.replace(/^(synth|play):/, "")}`, "error");
+				}
 			} else if (event.type === "play_start" || event.type === "synth_start") {
 				this.#labDiagLine(`stream_frag ${event.type} ${event.unitId}`);
 			}
@@ -613,6 +631,9 @@ export class VoiceSession {
 						transcriptPreviewKind: this.#provisionalKind ?? "partial",
 					}
 					: {}),
+			...(this.#narrationSignal && !this.#narrationSignal.aborted
+				? { narrating: true as const }
+				: {}),
 		};
 	}
 
@@ -656,6 +677,8 @@ export class VoiceSession {
 		if (this.#bargeLatched && !force) return;
 		this.#bargeLatched = false;
 		this.#bargeGate = undefined;
+		this.#bargeTranscript?.clear();
+		this.#bargeTranscript = undefined;
 		const ac = this.#bargeAbort;
 		this.#bargeAbort = undefined;
 		const stop = this.#captureStop;
@@ -679,7 +702,7 @@ export class VoiceSession {
 			this.#noteBarge("skip muted");
 			return;
 		}
-		if (this.#state.phase !== "speaking") {
+		if (this.#state.phase !== "speaking" && !this.#voicePrepOpen()) {
 			this.#noteBarge(`skip phase=${this.#state.phase}`);
 			return;
 		}
@@ -691,6 +714,8 @@ export class VoiceSession {
 		this.#bargeAbort = ac;
 		this.#bargeLatched = false;
 		this.#bargeGate = createBargeGate();
+		this.#bargeTranscript = createBargeTranscript();
+		this.#bargeSampleRateHz = 16_000;
 		this.#bargeStartedAt = this.#now();
 		this.#bargeLastReason = "";
 		this.#bargeFrames = 0;
@@ -705,17 +730,24 @@ export class VoiceSession {
 					this.#noteBarge("mic_ready");
 				},
 				onPcmChunk: (pcm, meta) => {
-					if (signal.aborted || this.#bargeLatched) return;
+					if (signal.aborted) return;
+					const atMs = this.#now() - this.#bargeStartedAt;
+					this.#bargeSampleRateHz = meta.sampleRateHz || this.#bargeSampleRateHz;
+					if (this.#bargeLatched) {
+						this.#bargeTranscript?.pushDuringRun(atMs, pcm);
+						return;
+					}
 					const gate = this.#bargeGate;
 					if (!gate) return;
 					this.#bargeFrames += 1;
 					const micRms = rmsS16le(pcm, meta.channels);
 					const playbackRms = this.#meter.playbackLevel();
 					const decision = gate.push({
-						atMs: this.#now() - this.#bargeStartedAt,
+						atMs,
 						micRms,
 						playbackRms,
 					});
+					this.#bargeTranscript?.observe(atMs, pcm, decision.runStartMs);
 					const changed = decision.reason !== this.#bargeLastReason;
 					const sample = this.#bargeFrames === 1 || this.#bargeFrames % 25 === 0;
 					if (changed || sample) {
@@ -726,15 +758,26 @@ export class VoiceSession {
 					}
 					if (!decision.confirmed) return;
 					this.#bargeLatched = true;
-					this.#noteBarge("commit");
+					this.#noteBarge(
+						`commit onsetMs=${decision.runStartMs ?? -1} sttBytes=${this.#bargeTranscript?.pcm().byteLength ?? 0}`,
+					);
+					this.#speakEpoch += 1;
+					this.#streamTurnId += 1;
 					this.deps.notify?.("Barge-in: audio cortado. Seguí hablando.", "info");
-					this.dispatch({ type: "BARGE_COMMIT" });
+					const preparing = this.#state.phase === "awaiting_agent";
+					this.dispatch({ type: preparing ? "BARGE_COMMIT_VOICE" : "BARGE_COMMIT" });
 					void this.flush();
 				},
 			});
 			this.#captureStop = async () => {
 				try {
-					const audio = await session.stop(signal);
+					const captured = await session.stop(signal);
+					const transcript = this.#bargeTranscript;
+					const kept = transcript?.pcm() ?? new Uint8Array();
+					const anchored = transcript?.anchored() ?? false;
+					const rate = captured.sampleRateHz || this.#bargeSampleRateHz;
+					transcript?.clear();
+					this.#bargeTranscript = undefined;
 					if (signal.aborted || !this.#bargeLatched) {
 						this.#labDiagLine("barge_discard");
 						return;
@@ -744,10 +787,43 @@ export class VoiceSession {
 					this.#bargeGate = undefined;
 					this.#micReady = false;
 					this.dispatch({ type: "CAPTURE_DONE" });
-					await this.#transcribe(audio, signal);
+					const channels = captured.channels === 2 ? 2 : 1;
+					if (!anchored || !bargeTranscriptSubmittable(kept.byteLength, rate, channels)) {
+						this.#noteBarge(
+							`stt_withheld anchored=${anchored} bytes=${kept.byteLength} captureBytes=${captured.bytes.byteLength}`,
+						);
+						this.dispatch({
+							type: "TRANSCRIBE_EMPTY",
+							detail: "Barge-in audio was not separated from playback. Nothing was sent.",
+						});
+						return;
+					}
+					this.#noteBarge(
+						`stt_window bytes=${kept.byteLength} captureBytes=${captured.bytes.byteLength} rate=${rate}`,
+					);
+					await this.#transcribe({
+						bytes: pcmS16leToWav(kept, rate, channels),
+						sampleRateHz: rate,
+						channels,
+						format: "wav",
+						...(captured.captureMeta
+							? { captureMeta: { ...captured.captureMeta, speechSeen: true } }
+							: {
+								captureMeta: {
+									captureId: "barge",
+									speechSeen: true,
+									endReason: "vad" as const,
+									durationMs: Math.round((kept.byteLength / (rate * channels * 2)) * 1000),
+									peakRms: 0,
+									meanRms: 0,
+								},
+							}),
+					}, signal);
 				} catch (error) {
 					this.#bargeLatched = false;
 					this.#bargeAbort = undefined;
+					this.#bargeTranscript?.clear();
+					this.#bargeTranscript = undefined;
 					if (isAbortError(error) || signal.aborted) return;
 					throw error;
 				}
@@ -756,6 +832,8 @@ export class VoiceSession {
 		} catch (error) {
 			this.#bargeAbort = undefined;
 			this.#bargeGate = undefined;
+			this.#bargeTranscript?.clear();
+			this.#bargeTranscript = undefined;
 			if (!isAbortError(error)) {
 				this.#labDiagLine("barge_arm_fail");
 			}
@@ -825,6 +903,43 @@ export class VoiceSession {
 		return this.#bargeTrace;
 	}
 
+	/** Last turn stage clocks. Absent until that stage has happened. */
+	lastVoiceTiming(): { readonly narrationMs?: number; readonly synthToPlaybackMs?: number } {
+		return {
+			...(this.#lastNarrationMs !== undefined ? { narrationMs: this.#lastNarrationMs } : {}),
+			...(this.#lastSynthToPlaybackMs !== undefined
+				? { synthToPlaybackMs: this.#lastSynthToPlaybackMs }
+				: {}),
+		};
+	}
+
+	#noteVoicePlayback(): void {
+		if (this.#latency.firstSynthAtMs && this.#latency.firstPlaybackAtMs) {
+			this.#lastSynthToPlaybackMs = Math.max(
+				0,
+				this.#latency.firstPlaybackAtMs - this.#latency.firstSynthAtMs,
+			);
+		}
+	}
+
+	#voicePrepOpen(): boolean {
+		const stage = this.#meter.speakStage;
+		return voiceInterruptWindow({
+			phase: this.#state.phase,
+			narrating: Boolean(this.#narrationSignal && !this.#narrationSignal.aborted),
+			synthesizing: stage === "synthesizing" || stage === "loading_voice",
+		});
+	}
+
+	/** Drop a learned quiet floor when real playback starts, so speaker onset is not a barge. */
+	#rebaseBargeFloor(): void {
+		if (!this.#bargeAbort || this.#bargeLatched) return;
+		this.#bargeGate = createBargeGate();
+		this.#bargeStartedAt = this.#now();
+		this.#bargeLastReason = "";
+		this.#noteBarge("floor_reset playback");
+	}
+
 	#noteBarge(line: string): void {
 		const entry = `${Math.round(this.#now())} ${line}`;
 		this.#bargeTrace = [...this.#bargeTrace, entry].slice(-12);
@@ -874,6 +989,7 @@ export class VoiceSession {
 	}
 
 	#armStreamAssembler(turnId: number): void {
+		this.#streamErrorReported = false;
 		this.#streamAssembler = new SentenceAssembler({
 			language: this.#config.engines.language === "auto" ? "es" : this.#config.engines.language,
 			// 2D.5 Strategy B: group short sentences for less choppy prosody.
@@ -958,6 +1074,7 @@ export class VoiceSession {
 		const thinking = this.deps.activeThinking?.();
 		this.#labDiagLine("voice_ai_narrate_start");
 		this.deps.onChromeUpdate?.();
+		void this.#armBargeMonitor();
 
 		let result;
 		try {
@@ -1013,6 +1130,9 @@ export class VoiceSession {
 		}
 
 		const narrated = result.ok ? result.text : source;
+		if (result.ok && result.path === "llm") {
+			this.#lastNarrationMs = result.latencyMs;
+		}
 		const path = result.ok ? result.path : "deterministic";
 		this.#labDiagLine(
 			`voice_ai_done path=${path} ms=${result.latencyMs} src=${
@@ -1109,6 +1229,7 @@ export class VoiceSession {
 			this.#meter.beginSynthesizing();
 		}
 		this.deps.onChromeUpdate?.();
+		void this.#armBargeMonitor();
 		const poll = setInterval(() => {
 			const cur = this.deps.tts as typeof tts;
 			const engine = cur.vibevoice ?? cur;
@@ -1167,10 +1288,12 @@ export class VoiceSession {
 						this.#simpleSpeakingActivity = true;
 						this.#meter.setSimpleSpeakingActivity(true);
 						this.#meter.beginSpeakingFromAudio(token);
+						this.#rebaseBargeFloor();
 						void this.#armBargeMonitor();
 						if (!this.#latency.firstPlaybackAtMs) {
 							this.#latency = { ...this.#latency, firstPlaybackAtMs: this.#now() };
 						}
+						this.#noteVoicePlayback();
 						this.deps.onChromeUpdate?.();
 					}
 				},
@@ -1178,12 +1301,28 @@ export class VoiceSession {
 		} catch (error) {
 			await player.stop();
 			this.#live.delete(token);
-			if (got || signal.aborted || !stillCurrent()) throw error;
+			if (got || signal.aborted || !stillCurrent() || error instanceof VibeVoiceWorkerStartupError) throw error;
+			const detail = error instanceof Error ? error.message : String(error);
+			this.#lastTtsFallbackReason = `pcm_before_audio:${detail.slice(0, 180)}`;
 			this.deps.notify?.(
-				"VibeVoice PCM failed before audio. Playing this sentence once as WAV.",
+				`VibeVoice PCM failed before audio (${detail.slice(0, 180)}). Playing this sentence once as WAV.`,
 				"warning",
 			);
-			const { audio } = await this.deps.tts.synthesize(speakable, { signal });
+			let audio: AudioChunk;
+			try {
+				({ audio } = await this.deps.tts.synthesize(speakable, { signal }));
+			} catch (wavError) {
+				const wavDetail = wavError instanceof Error ? wavError.message : String(wavError);
+				this.#lastTtsFallbackReason = `pcm_and_wav_failed:${detail.slice(0, 80)} | ${wavDetail.slice(0, 80)}`;
+				if (isAbortError(wavError) || signal.aborted) throw wavError;
+				throw new Error(
+					`WAV fallback failed (${wavDetail.slice(0, 180)}). PCM: ${detail.slice(0, 180)}`,
+				);
+			}
+			if (!audio.bytes || audio.bytes.byteLength === 0) {
+				this.#lastTtsFallbackReason = `wav_empty:${detail.slice(0, 120)}`;
+				throw new Error(`WAV fallback produced no audio. PCM: ${detail.slice(0, 180)}`);
+			}
 			return audio;
 		}
 		if (!got || !stillCurrent()) {
@@ -1266,11 +1405,13 @@ export class VoiceSession {
 		this.#simpleSpeakingActivity = !canScrub;
 		this.#meter.setSimpleSpeakingActivity(!canScrub);
 		this.#meter.beginSpeakingFromAudio(audio);
+		this.#rebaseBargeFloor();
 		void this.#armBargeMonitor();
 		this.deps.onChromeUpdate?.();
 		if (!this.#latency.firstPlaybackAtMs) {
 			this.#latency = { ...this.#latency, firstPlaybackAtMs: this.#now() };
 		}
+		this.#noteVoicePlayback();
 		const handle = await this.deps.playback.play(audio, { signal });
 		await handle.done;
 		// Cancelled / superseded turn: do not mark as spoken.
@@ -1861,12 +2002,15 @@ export class VoiceSession {
 			this.deps.onLabDiag?.(this.#lastLabDiag);
 			this.#lastCorrection = undefined;
 			this.#pendingReviewText = "";
-			this.dispatch({ type: "TRANSCRIBE_EMPTY" });
+			this.dispatch({ type: "TRANSCRIBE_EMPTY", detail: formatNoSpeechDetail(meta) });
 			if (this.#editHold) {
 				this.#resolveEditWaiter("");
 				return;
 			}
-			this.scheduleFluentRelisten();
+			// A capture that closed on its own never saw speech. Reopening
+			// immediately turns a dead microphone into a warning loop.
+			// A real silence that reaches maxListen still reopens.
+			if (meta.endReason !== "stop") this.scheduleFluentRelisten();
 			return;
 		}
 
@@ -1914,7 +2058,12 @@ export class VoiceSession {
 			this.deps.onLabDiag?.(this.#lastLabDiag);
 			this.#lastCorrection = undefined;
 			this.#pendingReviewText = "";
-			this.dispatch({ type: "TRANSCRIBE_EMPTY" });
+			this.dispatch({
+				type: "TRANSCRIBE_EMPTY",
+				detail: meta
+					? `Whisper returned no text. ${formatNoSpeechDetail(meta)}`
+					: "Whisper returned no text.",
+			});
 			if (this.#editHold) {
 				this.#resolveEditWaiter("");
 				return;
@@ -1990,12 +2139,23 @@ export class VoiceSession {
 		if (!gate.accept) {
 			// Unreliable → manual review (or silence), never auto-send.
 			this.#pendingReviewText = "";
-			if (gate.reason === "prompt_echo" || gate.reason === "no_speech_seen" || gate.reason === "rms_too_low") {
+			if (
+				gate.reason === "prompt_echo"
+				|| gate.reason === "no_speech_seen"
+				|| gate.reason === "rms_too_low"
+				|| gate.reason === "voiced_too_short"
+				|| gate.reason === "cancelled"
+			) {
 				this.deps.notify?.(
 					`Voice skipped auto-send (${gate.reason}). Silence/noise ignored.`,
 					"info",
 				);
-				this.dispatch({ type: "TRANSCRIBE_EMPTY" });
+				this.dispatch({
+					type: "TRANSCRIBE_EMPTY",
+					detail: meta
+						? `Auto-send was blocked (${gate.reason}). ${formatNoSpeechDetail(meta)}`
+						: `Auto-send was blocked (${gate.reason}).`,
+				});
 				this.scheduleFluentRelisten();
 				return;
 			}
@@ -2013,7 +2173,12 @@ export class VoiceSession {
 			this.deps.onLabDiag?.(this.#lastLabDiag);
 			this.deps.notify?.("Duplicate transcript ignored.", "warning");
 			this.#pendingReviewText = "";
-			this.dispatch({ type: "TRANSCRIBE_EMPTY" });
+			this.dispatch({
+				type: "TRANSCRIBE_EMPTY",
+				detail: meta
+					? `Duplicate transcript ignored. ${formatNoSpeechDetail(meta)}`
+					: "Duplicate transcript ignored.",
+			});
 			if (this.#config.behavior.fluentConversation) this.scheduleFluentRelisten();
 			return;
 		}

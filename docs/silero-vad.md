@@ -37,6 +37,21 @@ pw-record stdout PCM
 
 Without model **or** without optional `onnxruntime-node`, `auto` ≡ energy → **no change** to the six GS-Lab-approved behaviors.
 
+If Silero inference fails after capture starts, the same audio stream switches to
+Energy VAD, preserving speech already observed by the fallback. A low speech
+probability alone does not trigger recovery. Each capture releases its ONNX
+session on close, cancellation, or process error.
+
+## Pi onboarding
+
+The model is not in the npm package. After TTS setup, Pi checks
+`~/.local/share/gentle-voice/models/silero/silero_vad.onnx` (or the active
+`GENTLE_VOICE_HOME` models directory). If it is missing or the wrong size,
+Pi asks before downloading the file pinned to commit `1e261b036686cd0017d500ee96acd1c4ba572a9d`
+(2,327,524 bytes, MIT). A decline is stored in `vad.json` and Energy VAD stays
+active without asking again. A correct VibeVoice install does not mark
+conversation mode ready while Silero is absent.
+
 ## Lab enablement (after authorization)
 
 1. Install optional runtime in a **lab-only** tree or as optionalDependency: `onnxruntime-node` (~50 MB platform binary).

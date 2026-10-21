@@ -23,8 +23,8 @@ export interface CompactWidgetLeaf {
 	dispose?(): void;
 }
 
-/** Single ASCII space between emoji glyph and brand (avoid emoji glue). */
-export const VOICE_GLYPH_GAP = " ";
+/** Room after the mic glyph. One space sits inside the emoji cell. */
+export const VOICE_GLYPH_GAP = "  ";
 
 export const VOICE_BRAND = "Gentle Voice";
 
@@ -40,6 +40,7 @@ export function activityThemeRole(activity: VoiceChromeActivity): string {
 			return "accent";
 		case "ARMING":
 		case "WORKING":
+		case "NARRATING":
 		case "TRANSCRIBING":
 			return "toolTitle";
 		case "MUTED":

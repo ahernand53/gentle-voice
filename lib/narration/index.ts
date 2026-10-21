@@ -38,6 +38,13 @@ export {
 	buildNarrationUserMessage,
 	shouldPreferLiteralNarration,
 } from "./narration-prompt.ts";
+export {
+	formatVoiceAiStatus,
+	hostStatusLabel,
+	narrationModeLabel,
+	narratorSourceLabel,
+	type VoiceAiStatusSnapshot,
+} from "./status.ts";
 
 export {
 	readVoiceAiPreference,

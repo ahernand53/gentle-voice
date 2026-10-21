@@ -5,9 +5,10 @@
  */
 
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { VIBEVOICE_PREFERRED_VOICE } from "../adapters/vibevoice-tts.ts";
 import { planVibeVoiceInstall, type VibeVoiceHardwareReport } from "./install-plan.ts";
 import {
@@ -16,11 +17,56 @@ import {
 	VIBEVOICE_INTEGRITY_KIND,
 	type VibeVoiceArtifact,
 } from "./manifest.ts";
+import {
+	createInstallChecklist,
+	type InstallStep,
+	type InstallStepId,
+	type InstallStepState,
+} from "./install-progress.ts";
 import { readTtsEnginePreference, writeTtsEnginePreference } from "./tts-preference.ts";
 
 export interface OnboardingIo {
 	fetch(artifact: VibeVoiceArtifact, destination: string, signal: AbortSignal): Promise<void>;
-	run(command: string, args: readonly string[], signal: AbortSignal): Promise<{ code: number }>;
+	run(command: string, args: readonly string[], signal: AbortSignal): Promise<{ code: number; detail?: string }>;
+	/**
+	 * Start the worker and verify a warm synthesis before accepting the install.
+	 * Production uses the private Python. Tests can omit it.
+	 */
+	probeWorker?(
+		python: string,
+		workerScript: string,
+		home: string,
+		signal: AbortSignal,
+	): Promise<{ code: number; detail?: string }>;
+}
+
+export type VibeVoiceInstallPhase =
+	| "starting"
+	| "verifying"
+	| "downloading"
+	| "preparing_python"
+	| "installing_python"
+	| "configuring_voice"
+	| "verifying_install";
+
+export const VIBEVOICE_PHASE_TEXT: Record<VibeVoiceInstallPhase, string> = {
+	starting: "Installing VibeVoice...",
+	verifying: "Downloading model",
+	downloading: "Downloading source",
+	preparing_python: "Preparing Python environment",
+	installing_python: "Installing dependencies",
+	configuring_voice: "Installing Spanish voice",
+	verifying_install: "Verifying voice engine",
+};
+
+/** Reads package metadata. It does not import the model or touch the GPU. */
+export const VIBEVOICE_DEP_CHECK =
+	"import importlib.metadata as m, importlib.util as u; raise SystemExit(0 if m.version('vibevoice') and u.find_spec('torch') else 4)";
+
+export interface VibeVoiceInstallProgress {
+	readonly phase: VibeVoiceInstallPhase;
+	readonly message: string;
+	readonly steps: readonly InstallStep[];
 }
 
 export type OnboardingStatus =
@@ -46,6 +92,7 @@ export interface OnboardingResult {
 	readonly fetched: readonly string[];
 	readonly skipped: readonly string[];
 	readonly offeredEngine: "piper";
+	readonly detail?: string;
 }
 
 export function vibeVoiceInside(path: string, root: string): boolean {
@@ -97,6 +144,14 @@ async function placeArtifact(
 	const dest = join(targetDir, artifact.relativePath);
 	if (!vibeVoiceInside(dest, targetDir)) throw new Error("path_escapes");
 	if (await artifactMatches(dest, artifact)) return "skipped";
+	if (artifact.layout === "repo") {
+		await io.fetch(artifact, dest, signal);
+		if (!(await artifactMatches(dest, artifact))) {
+			await rm(dirname(dest), { recursive: true, force: true });
+			throw Object.assign(new Error(`corrupt:${artifact.id}`), { code: "corrupt" });
+		}
+		return "fetched";
+	}
 	const partial = `${dest}.partial`;
 	await mkdir(dirname(dest), { recursive: true });
 	try {
@@ -120,9 +175,11 @@ export async function runVibeVoiceOnboarding(input: {
 	readonly alreadyInstalled: boolean;
 	readonly consent: boolean | undefined;
 	readonly allowNetwork: boolean;
+	readonly allowTmpfs?: boolean;
 	readonly signal?: AbortSignal;
 	readonly io?: OnboardingIo;
 	readonly artifacts?: readonly VibeVoiceArtifact[];
+	readonly onProgress?: (progress: VibeVoiceInstallProgress) => void;
 }): Promise<OnboardingResult> {
 	const signal = input.signal ?? new AbortController().signal;
 	const artifacts = input.artifacts ?? VIBEVOICE_ARTIFACTS;
@@ -146,6 +203,7 @@ export async function runVibeVoiceOnboarding(input: {
 		targetDir: input.targetDir,
 		hardware: input.hardware,
 		alreadyInstalled: false,
+		allowTmpfs: input.allowTmpfs,
 	});
 	if (plan.status === "blocked") {
 		return { ...base, status: "blocked", engine: "piper", reason: plan.reasons.join(",") };
@@ -154,7 +212,6 @@ export async function runVibeVoiceOnboarding(input: {
 		return { ...base, status: "consent_unavailable", engine: "piper", reason: "confirm_required" };
 	}
 	if (!input.consent) {
-		writeTtsEnginePreference(input.voiceHome, "piper");
 		return { ...base, status: "declined", engine: "piper", reason: "user_declined" };
 	}
 	if (!input.allowNetwork || !input.io) {
@@ -167,33 +224,159 @@ export async function runVibeVoiceOnboarding(input: {
 	const io = input.io;
 	const fetched: string[] = [];
 	const skipped: string[] = [];
+	const matched = new Set<string>();
+	const checklist = createInstallChecklist();
+	const phaseFor = (id: InstallStepId): VibeVoiceInstallPhase => {
+		if (id === "source") return "downloading";
+		if (id === "python") return "preparing_python";
+		if (id === "dependencies") return "installing_python";
+		if (id === "spanish") return "configuring_voice";
+		if (id === "engine" || id === "activate") return "verifying_install";
+		return "verifying";
+	};
+	const emit = (message: string, phase: VibeVoiceInstallPhase = "starting"): void => {
+		input.onProgress?.({ phase, message, steps: checklist.snapshot() });
+	};
+	const mark = (id: InstallStepId, state: InstallStepState): void => {
+		checklist.mark(id, state);
+		const running = checklist.snapshot().find((step) => step.state === "running");
+		emit(running?.label ?? "Installing VibeVoice...", running ? phaseFor(running.id) : "starting");
+	};
+	const cancelled = (): OnboardingResult => ({
+		...base,
+		status: "cancelled",
+		engine: "piper",
+		reason: "cancelled",
+		fetched,
+		skipped,
+	});
+	const matches = async (artifact: VibeVoiceArtifact): Promise<boolean> => {
+		if (matched.has(artifact.id)) return true;
+		const ok = await artifactMatches(join(input.targetDir, artifact.relativePath), artifact);
+		if (ok) matched.add(artifact.id);
+		return ok;
+	};
+	const obtain = async (artifact: VibeVoiceArtifact): Promise<"fetched" | "skipped"> => {
+		if (await matches(artifact)) {
+			if (!skipped.includes(artifact.id)) skipped.push(artifact.id);
+			return "skipped";
+		}
+		if (signal.aborted) throw new Error("cancelled");
+		const outcome = await placeArtifact(artifact, input.targetDir, io, signal);
+		if (outcome === "fetched") fetched.push(artifact.id);
+		else if (!skipped.includes(artifact.id)) skipped.push(artifact.id);
+		matched.add(artifact.id);
+		return outcome;
+	};
 	try {
+		emit("Installing VibeVoice...");
+		const find = (id: VibeVoiceArtifact["id"]): VibeVoiceArtifact | undefined => artifacts.find((artifact) => artifact.id === id);
+		const modelFiles = [find("weights"), find("model-config"), find("model-preprocessor")]
+			.filter((artifact): artifact is VibeVoiceArtifact => Boolean(artifact));
+		mark("weights", "running");
+		let modelFetched = false;
+		for (const artifact of modelFiles) {
+			if (signal.aborted) return cancelled();
+			const outcome = await obtain(artifact);
+			if (outcome === "fetched") modelFetched = true;
+		}
+		mark("weights", modelFiles.length === 0 ? "skipped" : modelFetched ? "completed" : "reused");
+		const sourceFiles = [find("code-license"), find("code-project")]
+			.filter((artifact): artifact is VibeVoiceArtifact => Boolean(artifact));
+		const missingSource: VibeVoiceArtifact[] = [];
+		for (const artifact of sourceFiles) {
+			if (signal.aborted) return cancelled();
+			if (await matches(artifact)) {
+				if (!skipped.includes(artifact.id)) skipped.push(artifact.id);
+			} else missingSource.push(artifact);
+		}
+		let sourceFetched = false;
+		if (missingSource.length === 0) {
+			mark("source", sourceFiles.length === 0 ? "skipped" : "reused");
+		} else {
+			mark("source", "running");
+			for (const artifact of missingSource) {
+				const outcome = await obtain(artifact);
+				if (outcome === "fetched") sourceFetched = true;
+			}
+			mark("source", "completed");
+		}
+		mark("python", "running");
 		const venv = join(input.targetDir, ".venv");
-		assertNoPrivilege("python3", ["-m", "venv", venv]);
-		const created = await io.run("python3", ["-m", "venv", venv], signal);
-		if (created.code !== 0) throw new Error("venv_failed");
 		const python = join(venv, "bin", "python");
 		const pip = join(venv, "bin", "pip");
+		assertNoPrivilege("python3", ["-m", "venv", venv]);
+		let pythonReady = false;
+		try {
+			await stat(python);
+			await stat(pip);
+			const checked = await io.run(
+				python,
+				["-c", "import sys; raise SystemExit(0 if sys.prefix.endswith('.venv') else 3)"],
+				signal,
+			);
+			pythonReady = checked.code === 0;
+		} catch {
+			pythonReady = false;
+		}
+		if (!pythonReady) {
+			const created = await io.run("python3", ["-m", "venv", venv], signal);
+			if (created.code !== 0) throw new Error("venv_failed");
+			const checked = await io.run(
+				python,
+				["-c", "import sys; raise SystemExit(0 if sys.prefix.endswith('.venv') else 3)"],
+				signal,
+			);
+			if (checked.code !== 0) throw new Error("python_not_private");
+			mark("python", "completed");
+		} else mark("python", "reused");
 		assertPrivateTool(python, input.targetDir);
 		assertPrivateTool(pip, input.targetDir);
-		const checked = await io.run(
-			python,
-			["-c", "import sys; raise SystemExit(0 if sys.prefix.endswith('.venv') else 3)"],
-			signal,
-		);
-		if (checked.code !== 0) throw new Error("python_not_private");
-		for (const artifact of artifacts) {
-			if (signal.aborted) {
-				return { ...base, status: "cancelled", engine: "piper", reason: "cancelled", fetched, skipped };
+		mark("dependencies", "running");
+		const depArgs = ["-c", VIBEVOICE_DEP_CHECK];
+		let dependencies = await io.run(python, depArgs, signal);
+		if (dependencies.code !== 0) {
+			const pipArgs = ["install", "-e", `${join(input.targetDir, "code")}[streamingtts]`];
+			assertNoPrivilege(pip, pipArgs);
+			const installed = await io.run(pip, pipArgs, signal);
+			if (signal.aborted) throw new Error("cancelled");
+			if (installed.code !== 0) {
+				throw Object.assign(new Error("pip_failed"), { detail: installed.detail });
 			}
-			const outcome = await placeArtifact(artifact, input.targetDir, io, signal);
-			if (outcome === "fetched") fetched.push(artifact.id);
-			else skipped.push(artifact.id);
+			dependencies = await io.run(python, depArgs, signal);
+			if (dependencies.code !== 0) {
+				throw Object.assign(new Error("verify_failed"), { detail: dependencies.detail });
+			}
+			mark("dependencies", "completed");
+		} else mark("dependencies", "reused");
+		mark("spanish", "running");
+		const voice = find("spanish-voice");
+		if (!voice) mark("spanish", "skipped");
+		else {
+			const already = await matches(voice);
+			if (!already) {
+				const outcome = await obtain(voice);
+				mark("spanish", outcome === "fetched" ? "completed" : "reused");
+			} else if (sourceFetched) {
+				mark("spanish", "completed");
+			} else {
+				if (!skipped.includes(voice.id)) skipped.push(voice.id);
+				mark("spanish", "reused");
+			}
 		}
-		const pipArgs = ["install", "-e", `${join(input.targetDir, "code")}[streamingtts]`];
-		assertNoPrivilege(pip, pipArgs);
-		const installed = await io.run(pip, pipArgs, signal);
-		if (installed.code !== 0) throw new Error("pip_failed");
+		mark("engine", "running");
+		const worker = join(dirname(fileURLToPath(import.meta.url)), "../../scripts/vibevoice-lab-worker.py");
+		if (io.probeWorker) {
+			const probed = await io.probeWorker(python, worker, input.targetDir, signal);
+			if (signal.aborted) throw new Error("cancelled");
+			if (probed.code !== 0) {
+				throw Object.assign(new Error("worker_probe_failed"), { detail: probed.detail });
+			}
+		} else if (!existsSync(worker)) throw new Error("worker_script_missing");
+		for (const artifact of artifacts) {
+			if (!(await matches(artifact))) throw new Error(`verify_failed:${artifact.id}`);
+		}
+		mark("engine", "completed");
 		const receipt = {
 			kind: VIBEVOICE_INTEGRITY_KIND,
 			commit: VIBEVOICE_CODE_COMMIT,
@@ -222,12 +405,23 @@ export async function runVibeVoiceOnboarding(input: {
 		};
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "failed";
+		const detail = (error as { detail?: string }).detail;
 		if (message === "cancelled" || signal.aborted) {
 			return { ...base, status: "cancelled", engine: "piper", reason: "cancelled", fetched, skipped };
 		}
+		const running = checklist.snapshot().find((step) => step.state === "running");
+		if (running) mark(running.id, "failed");
 		const code = (error as { code?: string }).code;
 		const status = code === "corrupt" ? "corrupt" : fetched.length + skipped.length > 0 ? "partial" : "failed";
-		return { ...base, status, engine: "piper", reason: message, fetched, skipped };
+		return {
+			...base,
+			status,
+			engine: "piper",
+			reason: message,
+			fetched,
+			skipped,
+			...(detail ? { detail } : {}),
+		};
 	}
 }
 

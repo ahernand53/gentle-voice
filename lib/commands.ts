@@ -119,7 +119,7 @@ export function voiceHelpText(options?: { includeLab?: boolean }): string {
 		"  /gentle:voice voice-ai on|off|status  Narration model (does not change the written reply)",
 		"  /gentle:voice barge-in on|off|status  Interrupt playback by speaking",
 		"  /gentle:voice tts piper|vibevoice|kokoro  Select the TTS engine for this session",
-		"  /gentle:voice vibevoice-setup  Show the VibeVoice consent plan (does not download)",
+		"  /gentle:voice vibevoice-setup  Install VibeVoice after confirm. `plan` prints the terms. `cancel` stops the running install",
 	];
 	if (options?.includeLab || isGentleVoiceLabMode()) {
 		lines.push(

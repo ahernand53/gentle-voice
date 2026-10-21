@@ -87,8 +87,11 @@ export function openPipewirePcmStream(options: {
 	});
 	let settled = false;
 	let finished = false;
+	let cancelled = false;
+	let playbackError: Error | undefined;
 
 	const stop = async () => {
+		cancelled = true;
 		if (settled) return;
 		finished = true;
 		try {
@@ -115,12 +118,13 @@ export function openPipewirePcmStream(options: {
 		child.once("exit", (code, sig) => {
 			detach();
 			settled = true;
-			if (options.signal.aborted || finished) {
+			if (options.signal.aborted || cancelled) {
 				resolve();
 				return;
 			}
-			if (code !== 0 && code !== null && !sig) {
-				reject(new Error(`pw-play raw exited ${code}: ${stderr.trim().slice(0, 300)}`));
+			if (code !== 0 || sig) {
+				playbackError = new Error(`pw-play raw exited ${code}${sig ? ` (${sig})` : ""}: ${stderr.trim().slice(-300)}`);
+				reject(playbackError);
 				return;
 			}
 			resolve();
@@ -128,12 +132,18 @@ export function openPipewirePcmStream(options: {
 		child.once("error", (err) => {
 			detach();
 			settled = true;
+			playbackError = err;
 			reject(err);
 		});
 	});
+	// Playback may fail while the model is still loading. Keep the rejection
+	// handled until the owner awaits done, without hiding it from that owner.
+	void done.catch(() => {});
+	child.stdin?.on("error", (err) => { playbackError = err; });
 
 	return {
 		write(pcm: Uint8Array) {
+			if (playbackError) throw playbackError;
 			if (settled || options.signal.aborted || pcm.byteLength === 0) return;
 			child.stdin?.write(pcm);
 		},

@@ -2,8 +2,10 @@
  * Resolve VAD backend: Silero when available, else energy (fail-closed).
  */
 
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createEnergyVad, type EnergyVadOptions } from "./energy-vad.ts";
+import { readSileroDeclined, sileroModelPath, sileroPreferencePath } from "./silero-install.ts";
 import { tryCreateSileroVad, type SileroVadOptions } from "./silero-vad.ts";
 import type { VadBackendId, VadEngine } from "./types.ts";
 
@@ -46,6 +48,12 @@ export function modelPathFrom(input: ResolveVadInput, env: NodeJS.ProcessEnv): s
 	if (fromEnv) return fromEnv;
 	const modelsRoot = env.GENTLE_VOICE_MODELS?.trim();
 	if (modelsRoot) return join(modelsRoot, "silero", "silero_vad.onnx");
+	// Same directory the onboarding installer writes. Skip when HOME is absent
+	// so a unit test with env {} cannot see the developer's real install.
+	if (env.GENTLE_VOICE_HOME?.trim() || env.HOME?.trim()) {
+		const installed = sileroModelPath(env);
+		if (existsSync(installed)) return installed;
+	}
 	return "";
 }
 
@@ -62,6 +70,10 @@ export async function resolveVad(input: ResolveVadInput = {}): Promise<ResolvedV
 	});
 
 	if (preference === "energy") {
+		return energy();
+	}
+	// A recorded decline is energy on purpose. Do not warn on every listen.
+	if (preference === "auto" && readSileroDeclined(sileroPreferencePath(env))) {
 		return energy();
 	}
 

@@ -88,10 +88,13 @@ export function createSileroVadFromRunner(
 	let elapsedSamples = 0;
 	let silenceSamples = 0;
 	let postRollSamples = 0;
+	let voicedSamples = 0;
 	let lastProb = 0;
 	let pending = new Float32Array(0);
 	let ended = false;
 	let draining = false;
+	let listener: (() => void) | undefined;
+	let inferenceError = "";
 
 	const samplesToMs = (n: number) => (n / sampleRateHz) * 1_000;
 
@@ -107,6 +110,7 @@ export function createSileroVadFromRunner(
 		const speaking = prob >= speechProbThreshold;
 		if (speaking) {
 			speechSeen = true;
+			voicedSamples += frameSamples;
 			silenceSamples = 0;
 			postRollSamples = 0;
 			phase = "speech";
@@ -135,6 +139,14 @@ export function createSileroVadFromRunner(
 		phase = "pause";
 	};
 
+	const notify = (): void => {
+		try {
+			listener?.();
+		} catch {
+			/* the capture owner handles its own errors */
+		}
+	};
+
 	const drain = async (): Promise<void> => {
 		if (draining) return;
 		draining = true;
@@ -142,12 +154,17 @@ export function createSileroVadFromRunner(
 			while (pending.length >= SILERO_WINDOW_SAMPLES && !ended) {
 				const frame = pending.slice(0, SILERO_WINDOW_SAMPLES);
 				pending = pending.slice(SILERO_WINDOW_SAMPLES);
-				const prob = await runFrame(frame);
+				const scored = runFrame(frame);
+				const prob = typeof scored === "number" ? scored : await scored;
 				applyProb(prob, SILERO_WINDOW_SAMPLES);
+				notify();
 			}
+		} catch (error) {
+			inferenceError = error instanceof Error ? error.message.slice(0, 160) : "silero_inference_failed";
+			notify();
 		} finally {
 			draining = false;
-			if (pending.length >= SILERO_WINDOW_SAMPLES && !ended) {
+			if (!inferenceError && pending.length >= SILERO_WINDOW_SAMPLES && !ended) {
 				void drain();
 			}
 		}
@@ -155,12 +172,19 @@ export function createSileroVadFromRunner(
 
 	return {
 		backend: "silero",
+		get inferenceError(): string {
+			return inferenceError;
+		},
+		setUpdateListener(next: (() => void) | undefined): void {
+			listener = next;
+		},
 		get state(): VadEngineState {
 			return {
 				phase,
 				speechSeen,
 				elapsedMs: samplesToMs(elapsedSamples),
 				silenceMs: samplesToMs(silenceSamples),
+				voicedMs: samplesToMs(voicedSamples),
 				backend: "silero",
 				speechProb: lastProb,
 			};
@@ -172,17 +196,9 @@ export function createSileroVadFromRunner(
 			merged.set(pending);
 			merged.set(f32, pending.length);
 			pending = merged;
-			// Sync fast-path (tests / sync scorers): end latches in the same call.
-			while (pending.length >= SILERO_WINDOW_SAMPLES && !ended) {
-				const frame = pending.subarray(0, SILERO_WINDOW_SAMPLES);
-				const scored = runFrame(frame);
-				if (typeof scored !== "number") {
-					void drain();
-					break;
-				}
-				pending = pending.slice(SILERO_WINDOW_SAMPLES);
-				applyProb(scored, SILERO_WINDOW_SAMPLES);
-			}
+			// One consumer. A sync scorer finishes before this returns.
+			// An async scorer (ORT) latches speech and end on setUpdateListener.
+			void drain();
 			return ended;
 		},
 		reset(): void {
@@ -191,10 +207,12 @@ export function createSileroVadFromRunner(
 			elapsedSamples = 0;
 			silenceSamples = 0;
 			postRollSamples = 0;
+			voicedSamples = 0;
 			lastProb = 0;
 			pending = new Float32Array(0);
 			ended = false;
 			draining = false;
+			inferenceError = "";
 		},
 	};
 }

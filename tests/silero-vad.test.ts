@@ -109,6 +109,33 @@ test("tryCreateSileroVad fails soft on missing model", async () => {
 	if (!r.ok) assert.match(r.reason, /unreadable|missing/);
 });
 
+test("async Silero latches speech and end after push returns", async () => {
+	let calls = 0;
+	const vad = createSileroVadFromRunner({
+		runFrame: async () => {
+			calls += 1;
+			return calls < 4 ? 0.9 : 0.05;
+		},
+		silenceHangMs: 40,
+		maxIntraPauseMs: 10,
+		postRollMs: 10,
+		sampleRateHz: 16_000,
+	});
+	let updates = 0;
+	vad.setUpdateListener?.(() => {
+		updates += 1;
+	});
+	assert.equal(vad.pushPcmS16le(s16leTone(SILERO_WINDOW_SAMPLES, 0.2)), false);
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	assert.equal(vad.state.speechSeen, true);
+	assert.ok(updates > 0);
+	for (let i = 0; i < 8; i++) {
+		vad.pushPcmS16le(s16leTone(SILERO_WINDOW_SAMPLES, 0));
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	}
+	assert.equal(vad.state.phase, "ended");
+});
+
 test("silero does not end during leading silence", () => {
 	const vad = createSileroVadFromRunner({
 		runFrame: () => 0.1,
@@ -121,4 +148,28 @@ test("silero does not end during leading silence", () => {
 	}
 	assert.equal(vad.state.speechSeen, false);
 	assert.equal(vad.state.phase, "leading_silence");
+});
+
+test("async Silero scores each queued frame exactly once and never overlaps inference", async () => {
+	let calls = 0;
+	let active = 0;
+	let maxActive = 0;
+	const vad = createSileroVadFromRunner({
+		runFrame: async () => {
+			calls++;
+			active++;
+			maxActive = Math.max(maxActive, active);
+			await new Promise(resolve => setImmediate(resolve));
+			active--;
+			return 0.9;
+		},
+	});
+	vad.pushPcmS16le(s16leTone(SILERO_WINDOW_SAMPLES * 3, 0.2));
+	vad.pushPcmS16le(s16leTone(SILERO_WINDOW_SAMPLES * 2, 0.2));
+	for (let i = 0; i < 20 && vad.state.elapsedMs < 160; i++) {
+		await new Promise(resolve => setImmediate(resolve));
+	}
+	assert.equal(calls, 5);
+	assert.equal(maxActive, 1);
+	assert.equal(vad.state.voicedMs, 160);
 });

@@ -241,7 +241,7 @@ test("widget: waves only when provided; muted hides waves; narrow header", () =>
 		initialVoiceState({ enabled: true, phase: "idle" }),
 		{ terminalColumns: 40 },
 	);
-	assert.match(narrow.widgetContent![0]!, /^🎙 READY/);
+	assert.match(narrow.widgetContent![0]!, /^🎙 {2}READY/);
 	assert.doesNotMatch(narrow.widgetContent![0]!, /Gentle Voice/);
 });
 

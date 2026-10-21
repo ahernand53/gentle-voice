@@ -11,31 +11,41 @@
 
 Gentle Voice is a [Pi package](https://pi.dev/docs/latest/packages) for conversation: microphone, speech-to-text, and text-to-speech. It runs inside Pi Coding Agent on its own, and inside Gentle Shell when that host is present. Gentle Shell is not required.
 
-The published npm release is `0.1.4`. This tree prepares `0.1.5` and is not published yet.
+`gentle-voice@0.1.5` is one npm package for both hosts. It is not on the public registry yet: npm `latest` is still `0.1.4`. After publication, the two commands below install that same package. Cloning this repository is not the install.
 
 ## Install
 
-You need Node.js ≥ 22.19 and Pi Coding Agent. Linux with PipeWire is the tested audio path. Windows and macOS are not supported.
+Node.js ≥ 22.19. The tested audio path is Linux x64 with PipeWire. Windows and macOS are not supported.
+
+### Pi Coding Agent
 
 ```bash
 pi install npm:gentle-voice
 ```
 
-From a local checkout, before anything is published:
+Pi does not need Gentle Shell. Voice AI uses the model that is active in that Pi session. It does not read Gentle AI profiles.
 
-```bash
-pi install ./gentle-voice
-```
-
-Gentle Shell, when the installed launcher supports it:
+### Gentle Shell
 
 ```bash
 gentle-shell install npm:gentle-voice
 ```
 
-A git install is also a Pi source (`pi install git:github.com/efolchmontiel/gentle-voice`). Prefer the npm package once a release exists. Restart the host after installing.
+Gentle Shell does not need a separate `pi install`. It installs the same `gentle-voice` package.
 
-The first launch does not download models by itself. If speech models are missing, the host asks before downloading Whisper, Piper, and the Daniela voice (about 220 MiB) into the private data directory for that host. Decline and nothing is fetched. `/gentle:voice setup` repeats that check. It does not install GPU drivers, CUDA, or a system Python.
+The active Gentle AI profile must have a role named `voice-ai`, and that role must have a model assigned. `voice-ai` is the role name, not a model name. In `/gentle:profiles`, add the role to the active profile and point it at a model Pi can already call:
+
+```json
+"voice-ai": { "model": "provider/model-id", "thinking": "low" }
+```
+
+That model writes the spoken line. The orchestrator model keeps writing the text on screen. Thinking on the role is optional. When it is omitted, the narrator does not copy the orchestrator's thinking. If the role exists but has no model, the second call uses the profile orchestrator. If the role is missing, the profile orchestrator is used, then the active Pi model. An invalid id or a provider error is shown, and the written reply is spoken as-is. Models are not swapped silently.
+
+Restart the host after installing.
+
+The first launch does not download models by itself. The voice-engine list is `VibeVoice`, `Piper`, and `Skip`. Pi highlights the first row, so the recommended engine is listed first with `(Recommended for your system)`. VibeVoice is recommended only when Linux x64, an NVIDIA GPU of at least 4 GB, 12 GiB free, and `python3` are confirmed. A failed GPU check is labeled `(Compatibility unknown)` and does not count as proof that the GPU is missing. Piper is the recommendation in that case, and when VibeVoice is `(Not supported)`, as long as Piper itself can run. Choosing an engine does not start a download. The install, finish, or repair question comes next. After Yes, Pi keeps a checklist on screen: each real step stays visible as Pending, Running, Completed, Failed, Reused, or Skipped. Notifications are not the progress view. When the checklist finishes, the engine is selected in the current session. `Ready to use` is shown only after that activation. No audio is played. `/gentle:voice status` and `/gentle:voice vibevoice-setup plan` stay available while that runs. `/gentle:voice vibevoice-setup cancel` stops it and keeps verified files. The next launch does not ask again when the install is already verified. Whisper is a separate question. An explicit Piper or VibeVoice choice is kept. `/gentle:voice setup` repeats the check. It does not install GPU drivers, CUDA, or a system Python.
+
+Do not pass `--extension` to a Pi that already has `npm:gentle-voice` installed. Pi would register `/gentle:voice` twice. After `0.1.5` is published, `pi install npm:gentle-voice` is the install. Until then, npm `latest` is still `0.1.4`.
 
 ## First session
 
@@ -84,7 +94,7 @@ Whisper runs locally after you accept its download. The transcript that can be s
 | `/gentle:voice purge` | Show the delete plan. Nothing is removed until you confirm |
 | `/gentle:voice stream auto\|pcm\|wav` | VibeVoice playback. See below |
 | `/gentle:voice tts piper\|vibevoice` | Engine for this session |
-| `/gentle:voice vibevoice-setup` | Install wizard. A download also needs `GENTLE_VOICE_VIBEVOICE_ALLOW_NETWORK=1`. `plan` only prints |
+| `/gentle:voice vibevoice-setup` | Short confirm, then install. `plan` prints the full terms |
 | `/gentle:voice voice-ai on\|off\|status` | Optional second model that writes the spoken text |
 | `/gentle:voice barge-in on\|off\|status` | Interrupt playback by speaking |
 
@@ -96,16 +106,20 @@ The first `Esc` while voice is listening, loading, synthesizing, or speaking can
 
 ## Voice AI
 
-Voice AI writes a short spoken version after the agent settles. It does not change the text on screen and it does not add an agent turn.
+Voice AI writes a short spoken version after the agent settles. It does not change the text on screen and it does not add an agent turn. The second call starts only after the orchestrator has finished. Narration does not begin on partial text.
 
-`voice-ai` is the name of a role inside the active Gentle Shell profile. It is not a model. In `/gentle:profiles`, add that role to the active profile and point it at any model Pi can already call. The stored fields are `model` and `thinking` (an `effort` field is read the same way). A lab profile used `nan/mimo-v2.6-flash` with effort `low`. That pair is an example, not a default and not a free model. Pi without profiles, or a profile without the role, uses the active model. The lab command `/gentle:voice voice-ai-profile` is not part of the published command list.
+On Pi alone, the narrator is the active Pi model. Switching that model switches the next narration. A Gentle AI profile on disk is not read.
+
+On Gentle Shell, create the `voice-ai` role on the active profile and assign it a model, as in [Install](#install). That assigned model is the narrator. It is not replaced by the active Pi model while the role has a valid model.
 
 | Situation | What happens |
 | --- | --- |
-| Role `voice-ai` has a valid model | That model writes the spoken text |
-| The role is missing | The orchestrator model, or the active Pi model, writes it |
-| The role exists but the model id is empty or invalid | Deterministic speech renderer. No model call |
-| The provider errors or the call exceeds `voiceAi.timeoutMs` (25 seconds) | Deterministic speech renderer |
+| Pi, no profile opt-in | The active Pi model writes the spoken text |
+| Role `voice-ai` has a model | That model writes the spoken text |
+| Role has a model and no thinking | That model. Thinking stays unset |
+| Role exists, no model | The profile orchestrator writes it |
+| Role is missing | The profile orchestrator, then the active Pi model |
+| Invalid id, missing model, or provider error | The reason is shown. The written reply is spoken |
 | `/gentle:voice voice-ai off` | No extra model call |
 
 The narrator is a second model call. It is billed on top of the orchestrator, at that narrator's own provider rates. The call sends the assistant text, clipped to `voiceAi.maxInputChars` (8000 characters), and receives only the spoken line. It does not send tool history, it does not write the conversation history, and it does not change the text on screen. Cost follows the provider, the price, the context, and the length of the answer. One lab turn with MiMo used 363 input tokens and 9 output tokens. That turn is not the cost of every conversation, and it does not mean MiMo is free. A smaller narrator is usually cheaper. `/gentle:voice voice-ai off` skips the extra call.
@@ -122,7 +136,9 @@ When VibeVoice is selected and `pw-play` can play raw float32, playback is nativ
 
 If PCM is not supported, VibeVoice uses WAV and says so. It does not switch to Piper. If PCM already started and synthesis fails, the same sentence is not played again as WAV.
 
-On a compatible machine, `/gentle:voice vibevoice-setup` is the install wizard. It checks NVIDIA, VRAM, and free disk, shows the Microsoft terms, and asks before it fetches. The simulated tests cover consent, a private `.venv`, hash checks, a bad download, cancel, and retry. They do not fetch from Hugging Face. A real fetch needs `GENTLE_VOICE_VIBEVOICE_ALLOW_NETWORK=1` and has not been run. Until that run, do not treat the wizard as a finished download. `vibevoice-setup plan` only prints the plan. Declining, or hardware that fails the floor, leaves Piper in place and does not delete an engine you already have.
+On a compatible machine, `/gentle:voice vibevoice-setup` asks with a short confirm. Accepting that dialog is the download authorization. `vibevoice-setup plan` prints the licenses, hashes, and file list before you accept. The simulated tests do not fetch from Hugging Face. A real weights download in `/tmp` reached the verified `model.safetensors` and then stopped, because the experimental Spanish archive does not contain `sp-Spk0_woman.pt`. That voice is `demo/voices/streaming_model/sp-Spk0_woman.pt` inside the VibeVoice code archive. The installer now takes it from there and resumes files whose hash already matches. Declining, or hardware that fails the floor, leaves Piper in place and does not delete an engine you already have.
+
+The engine directory is `$XDG_DATA_HOME/gentle-voice/vibevoice`, or `~/.local/share/gentle-voice/vibevoice` when `XDG_DATA_HOME` is unset. `GENTLE_VOICE_HOME` and `GENTLE_VOICE_VIBEVOICE_HOME` are optional overrides. If the resolved directory is on tmpfs, including `/tmp`, Pi asks before using it and offers the persistent directory. The variables themselves are not changed. `GENTLE_VOICE_VIBEVOICE_ALLOW_TMPFS=1` is only for a throwaway test.
 
 The floor is an NVIDIA GPU, 4 GB of VRAM, and 12 GiB free. The one measured tree was about 8.6 GiB, so 8 GiB free is not enough. 8 GB of VRAM is the recommended and tested class: one Linux x64 machine with an RTX 2070. A card above 4 GB is not automatically supported. Windows, macOS, CPU, and other GPUs are not supported by a run we can cite.
 
@@ -138,7 +154,7 @@ Piper is the engine that installs with the consented voice download. It does not
 
 ## Barge-in
 
-During conversation, speaking over playback can interrupt it. The gate is microphone energy, not echo cancellation. It is not reliable on every speaker and microphone. `/gentle:voice barge-in off` stays off until you turn it on. The monitor runs only while audio is playing.
+During conversation, speaking can interrupt narration, synthesis, and playback. The gate is microphone energy, not echo cancellation. There is no acoustic echo canceller. Whisper receives audio from the detected speech onset, not the whole time the microphone was open. If that onset cannot be separated from playback, nothing is sent. `/gentle:voice barge-in off` stays off until you turn it on. The microphone stays closed while the orchestrator is still running tools.
 
 ## What gets spoken
 
@@ -160,7 +176,7 @@ A later message that did not come from the voice turn is not spoken automaticall
 
 ## Where data lives
 
-Standalone Pi uses the XDG data, config, and cache directories for `gentle-voice` on Linux. Gentle Shell uses `<prefix>/gentle-voice/`. Models are not inside the npm package. `/gentle:voice storage` prints the resolved paths.
+Standalone Pi uses the XDG data, config, and cache directories for `gentle-voice` on Linux (`~/.local/share/gentle-voice`, `~/.config/gentle-voice`, `~/.cache/gentle-voice`). VibeVoice lives under the data directory, in `vibevoice/`. Gentle Shell uses `<prefix>/gentle-voice/`. Preferences stay in the data directory, outside the npm package, so an update does not wipe them. Models are not inside the npm package. `/gentle:voice storage` prints the resolved paths. A path under `/tmp` is not a permanent install.
 
 Removing the package keeps that data:
 

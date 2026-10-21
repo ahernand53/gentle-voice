@@ -19,8 +19,14 @@ export const VIBEVOICE_MODEL_ID = "microsoft/VibeVoice-Realtime-0.5B";
 export const VIBEVOICE_CODE_ORIGIN = "https://github.com/microsoft/VibeVoice";
 export const VIBEVOICE_WEIGHTS_ORIGIN = "https://huggingface.co/microsoft/VibeVoice-Realtime-0.5B";
 export const VIBEVOICE_SPANISH_VOICE_ARCHIVE = "experimental_voices_sp.tar.gz";
-export const VIBEVOICE_SPANISH_VOICE_ORIGIN =
+/**
+ * This upload does not contain `sp-Spk0_woman.pt`. Its members are
+ * `sp/sp-Spk2_woman.pt`, `sp/sp-Spk3_man.pt`, `sp/sp-Spk4_woman.pt`, and
+ * `sp/sp-Spk5_man.pt`. The validated voice ships inside the code archive.
+ */
+export const VIBEVOICE_EXPERIMENTAL_SP_ARCHIVE =
 	"https://github.com/user-attachments/files/24035884/experimental_voices_sp.tar.gz";
+export const VIBEVOICE_SPANISH_VOICE_MEMBER = "demo/voices/streaming_model/sp-Spk0_woman.pt";
 export const VIBEVOICE_INSTALL_CONSENT_TOKEN = "INSTALL_VIBEVOICE";
 /**
  * Total GPU memory below this blocks a new install.
@@ -41,8 +47,19 @@ export const VIBEVOICE_TESTED_HOST =
 
 export interface VibeVoiceHardwareReport {
 	readonly nvidiaPresent: boolean;
+	/**
+	 * `ok` — nvidia-smi reported a GPU.
+	 * `no_gpu` — the command ran and no GPU memory was reported.
+	 * `unavailable` — the command could not be run. That is not proof that a GPU is absent.
+	 * Omitted by older fixtures; treated as a completed check.
+	 */
+	readonly probe?: "ok" | "no_gpu" | "unavailable";
 	readonly vramTotalMb?: number;
 	readonly freeDiskMb: number;
+	/** False when free space could not be read. Omitted means the figure is known. */
+	readonly diskKnown?: boolean;
+	/** `findmnt` FSTYPE when known. `tmpfs` blocks a new install unless allowTmpfs is set. */
+	readonly filesystem?: string;
 }
 
 export interface VibeVoiceDownloadStep {
@@ -85,7 +102,7 @@ const DOWNLOADS: readonly VibeVoiceDownloadStep[] = [
 		origin: VIBEVOICE_WEIGHTS_ORIGIN,
 		bytes: VIBEVOICE_MODEL_SAFETENSORS_BYTES,
 	},
-	{ id: "spanish-voice", origin: VIBEVOICE_SPANISH_VOICE_ORIGIN },
+	{ id: "spanish-voice", origin: `${VIBEVOICE_CODE_ORIGIN} (${VIBEVOICE_SPANISH_VOICE_MEMBER})` },
 ];
 
 function existingDirectory(path: string): string {
@@ -101,9 +118,23 @@ function existingDirectory(path: string): string {
 	return "/";
 }
 
-/** Read-only. Does not install drivers, CUDA, or Python. */
+/** Light check that `python3 -m venv` can be imported. Does not create an environment. */
+export function python3CanCreateVenv(): boolean {
+	try {
+		execFileSync("python3", ["-c", "import venv"], {
+			timeout: 2000,
+			stdio: "ignore",
+		});
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/** Read-only. Does not install drivers, CUDA, or Python, and does not load a model. */
 export function probeVibeVoiceHardware(targetDir: string): VibeVoiceHardwareReport {
 	let nvidiaPresent = false;
+	let probe: VibeVoiceHardwareReport["probe"] = "no_gpu";
 	let vramTotalMb: number | undefined;
 	try {
 		const out = execFileSync(
@@ -114,25 +145,47 @@ export function probeVibeVoiceHardware(targetDir: string): VibeVoiceHardwareRepo
 		const first = Number(out.trim().split(/\r?\n/, 1)[0]?.trim());
 		if (Number.isFinite(first) && first > 0) {
 			nvidiaPresent = true;
+			probe = "ok";
 			vramTotalMb = first;
 		}
 	} catch {
 		nvidiaPresent = false;
+		probe = "unavailable";
 	}
 	let freeDiskMb = 0;
+	let diskKnown = true;
 	try {
 		const stats = statfsSync(existingDirectory(targetDir));
 		freeDiskMb = Math.floor((Number(stats.bavail) * Number(stats.bsize)) / (1024 * 1024));
 	} catch {
 		freeDiskMb = 0;
+		diskKnown = false;
 	}
-	return { nvidiaPresent, ...(vramTotalMb !== undefined ? { vramTotalMb } : {}), freeDiskMb };
+	let filesystem: string | undefined;
+	try {
+		filesystem = execFileSync("findmnt", ["-n", "-o", "FSTYPE", "-T", existingDirectory(targetDir)], {
+			encoding: "utf8",
+			timeout: 2000,
+			stdio: ["ignore", "pipe", "ignore"],
+		}).trim() || undefined;
+	} catch {
+		filesystem = undefined;
+	}
+	return {
+		nvidiaPresent,
+		probe,
+		...(vramTotalMb !== undefined ? { vramTotalMb } : {}),
+		freeDiskMb,
+		diskKnown,
+		...(filesystem ? { filesystem } : {}),
+	};
 }
 
 export function planVibeVoiceInstall(input: {
 	readonly targetDir: string;
 	readonly hardware: VibeVoiceHardwareReport;
 	readonly alreadyInstalled: boolean;
+	readonly allowTmpfs?: boolean;
 }): VibeVoiceInstallPlan {
 	const base = {
 		targetDir: input.targetDir,
@@ -150,7 +203,7 @@ export function planVibeVoiceInstall(input: {
 		};
 	}
 	const reasons: string[] = [];
-	if (!input.hardware.nvidiaPresent) reasons.push("gpu_required");
+	if (input.hardware.probe !== "unavailable" && !input.hardware.nvidiaPresent) reasons.push("gpu_required");
 	if (input.hardware.nvidiaPresent && (input.hardware.vramTotalMb ?? 0) < VIBEVOICE_MIN_VRAM_MB) {
 		reasons.push("vram_below_4gb");
 	} else if (
@@ -159,17 +212,41 @@ export function planVibeVoiceInstall(input: {
 	) {
 		reasons.push("vram_above_minimum_untested");
 	}
-	if (input.hardware.freeDiskMb < VIBEVOICE_MIN_FREE_DISK_MB) reasons.push("disk_below_12gb");
-	else if (input.hardware.freeDiskMb < VIBEVOICE_RECOMMENDED_FREE_DISK_MB) {
+	if (input.hardware.filesystem === "tmpfs" && !input.allowTmpfs) reasons.push("tmpfs_destination");
+	if (input.hardware.diskKnown === false) {
+		// Free space was not read. That is not proof the disk is too small.
+	} else if (input.hardware.freeDiskMb < VIBEVOICE_MIN_FREE_DISK_MB) {
+		reasons.push("disk_below_12gb");
+	} else if (input.hardware.freeDiskMb < VIBEVOICE_RECOMMENDED_FREE_DISK_MB) {
 		reasons.push("disk_below_recommended");
 	}
-	const blocking = reasons.filter((reason) => reason === "gpu_required" || reason === "vram_below_4gb" || reason === "disk_below_12gb");
+	const blocking = reasons.filter((reason) =>
+		reason === "gpu_required" || reason === "vram_below_4gb" || reason === "disk_below_12gb" || reason === "tmpfs_destination",
+	);
 	if (blocking.length > 0) return { ...base, status: "blocked", reasons };
 	return {
 		...base,
 		status: "needs_consent",
 		reasons: ["consent_required", ...reasons],
 	};
+}
+
+export function formatVibeVoiceConsent(plan: VibeVoiceInstallPlan): string {
+	return [
+		"Recommended voice engine for Gentle Voice.",
+		"",
+		"Voice: Spanish, experimental (sp-Spk0_woman)",
+		"GPU: NVIDIA, 4 GB VRAM minimum",
+		"Storage: about 9 GiB on a persistent disk",
+		`Location: ${plan.targetDir}`,
+		"",
+		"Research-oriented weights. Microsoft conditions apply.",
+		"English-trained. Keep the audible disclaimer and the watermark.",
+		"This is not a commercial authorization.",
+		"",
+		"Full terms, hashes, and file list:",
+		"  /gentle:voice vibevoice-setup plan",
+	].join("\n");
 }
 
 export function formatVibeVoiceInstallPlan(plan: VibeVoiceInstallPlan): string {
@@ -192,7 +269,10 @@ export function formatVibeVoiceInstallPlan(plan: VibeVoiceInstallPlan): string {
 		"will not:",
 		...plan.willNot.map((line) => `- ${line}`),
 		"",
-		"A new install downloads only after you accept and GENTLE_VOICE_VIBEVOICE_ALLOW_NETWORK=1.",
+		"sp-Spk0_woman.pt is inside the VibeVoice code archive, under demo/voices/streaming_model.",
+		"experimental_voices_sp.tar.gz does not contain that file. It is not downloaded.",
+		"A new install downloads only after you accept the confirm dialog.",
+		"The destination must be a persistent directory. tmpfs, including /tmp, is refused.",
 		"That network step was not run in the simulated tests. Piper stays available.",
 		"A local .venv belongs inside the target directory, not in the system Python.",
 		"After a consented install, PCM is the playback default when pw-play supports float32.",

@@ -33,6 +33,8 @@ export interface BargeGateDecision {
 	readonly confirmed: boolean;
 	readonly reason: "below_floor" | "echo_like" | "building" | "confirmed" | "already";
 	readonly echoFloor: number;
+	/** Start of the current voiced candidate, ms from the first pushed frame clock. */
+	readonly runStartMs?: number;
 }
 
 const DEFAULTS = {
@@ -93,9 +95,17 @@ export function createBargeGate(options: BargeGateOptions = {}) {
 		get echoFloor() {
 			return Number.isFinite(echoFloor) ? echoFloor : 0;
 		},
+		get runStartMs(): number | undefined {
+			return runStart;
+		},
 		push(frame: BargeFrame): BargeGateDecision {
 			if (confirmed) {
-				return { confirmed: true, reason: "already", echoFloor: this.echoFloor };
+				return {
+					confirmed: true,
+					reason: "already",
+					echoFloor: this.echoFloor,
+					...(runStart !== undefined ? { runStartMs: runStart } : {}),
+				};
 			}
 			learnFloor(frame.micRms);
 			const need = Math.max(micFloor, echoFloor * floorRatio);
@@ -103,7 +113,12 @@ export function createBargeGate(options: BargeGateOptions = {}) {
 			const floorNow = this.echoFloor;
 			if (!pass) {
 				if (lastPassAt !== undefined && frame.atMs - lastPassAt <= dipMs && runStart !== undefined) {
-					return { confirmed: false, reason: "building", echoFloor: floorNow };
+					return {
+						confirmed: false,
+						reason: "building",
+						echoFloor: floorNow,
+						...(runStart !== undefined ? { runStartMs: runStart } : {}),
+					};
 				}
 				runStart = undefined;
 				lastPassAt = undefined;
@@ -117,9 +132,9 @@ export function createBargeGate(options: BargeGateOptions = {}) {
 			if (runStart === undefined) runStart = frame.atMs;
 			if (frame.atMs - runStart >= minVoicedMs) {
 				confirmed = true;
-				return { confirmed: true, reason: "confirmed", echoFloor: floorNow };
+				return { confirmed: true, reason: "confirmed", echoFloor: floorNow, runStartMs: runStart };
 			}
-			return { confirmed: false, reason: "building", echoFloor: floorNow };
+			return { confirmed: false, reason: "building", echoFloor: floorNow, runStartMs: runStart };
 		},
 	};
 }

@@ -34,11 +34,11 @@ The engine switch lasts for the session. Piper stays available and does not requ
 
 ## Install plan
 
-`/gentle:voice vibevoice-setup` detects an NVIDIA GPU, total VRAM, and free disk, shows the terms, and asks before fetching. `vibevoice-setup plan` only prints the plan. The fetch runs only when you accept and `GENTLE_VOICE_VIBEVOICE_ALLOW_NETWORK=1`. That flag was not used in the simulated tests, so a real Hugging Face install is still unproven. The wizard does not modify an engine directory that already passes the probe.
+`/gentle:voice vibevoice-setup` detects an NVIDIA GPU, total VRAM, free disk, and whether the destination is tmpfs. The confirm dialog is short. `vibevoice-setup plan` prints the full terms. Accepting the dialog authorizes the download. `GENTLE_VOICE_VIBEVOICE_ALLOW_NETWORK=0` refuses the network even after accept. The destination is the persistent Gentle Voice data directory, not `/tmp`. A verified file is kept and not downloaded again. The wizard does not modify an engine directory that already passes the probe.
 
 A new install is blocked without an NVIDIA GPU, with less than 4 GB of total VRAM, or with less than 12 GiB free. The one measured tree was 8611023085 bytes, about 8.6 GiB, so 8 GiB free cannot hold it. 8 GB of VRAM is recommended because that is the tested card. A larger card is not automatically supported. The preferred voice is `sp-Spk0_woman`. Playback is PCM when `pw-play` supports float32.
 
-The weights are about 1.9 GiB (`model.safetensors` must be exactly 2035332888 bytes). The code origin is `https://github.com/microsoft/VibeVoice` (MIT, Copyright (c) 2025 Microsoft). The weights origin is `https://huggingface.co/microsoft/VibeVoice-Realtime-0.5B`. The Spanish voice archive is the upstream experimental `experimental_voices_sp.tar.gz`. The model card is research-scoped and English-trained, and it is not recommended for commercial or real-world use without further testing. Keep the audible disclaimer and the watermark. The npm package does not contain the weights.
+The weights are about 1.9 GiB (`model.safetensors` must be exactly 2035332888 bytes). The code origin is `https://github.com/microsoft/VibeVoice` (MIT, Copyright (c) 2025 Microsoft). The weights origin is `https://huggingface.co/microsoft/VibeVoice-Realtime-0.5B`. `sp-Spk0_woman.pt` comes from `demo/voices/streaming_model/` in the VibeVoice code archive. `experimental_voices_sp.tar.gz` contains `sp/sp-Spk2_woman.pt` through `sp-Spk5_man.pt` and does not contain `sp-Spk0_woman.pt`. That archive is not downloaded. The model card is research-scoped and English-trained, and it is not recommended for commercial or real-world use without further testing. Keep the audible disclaimer and the watermark. The npm package does not contain the weights.
 
 With `GENTLE_VOICE_VIBEVOICE_ALLOW_NETWORK=1` and an accepted confirm dialog, the command uses the network adapter. Without that flag it stops at `network_not_authorized` and does not write `authorized: true`. The manual steps below still work if you install the tree yourself. A new install uses Piper until VibeVoice is selected.
 
@@ -73,3 +73,12 @@ Cold load takes several seconds and needs a compatible NVIDIA GPU for the CUDA b
 - First PCM frame time in an isolated generation is not the time until you hear speech.
 - There is no acoustic echo cancellation.
 - Windows and macOS are not a tested VibeVoice path.
+
+### Device precision and startup errors
+
+The default precision is automatic: BF16 on CUDA, because the checkpoint and
+the voice cache are BF16, and FP32 on CPU. FP16 is only used when requested.
+`GENTLE_VOICE_VIBEVOICE_DTYPE=auto|float16|bfloat16|float32` overrides the choice.
+A worker load failure is reported using its structured Python error. It does
+not retry the same failed engine boot as WAV; WAV recovery remains available
+for failures in PCM transport after a successful boot.

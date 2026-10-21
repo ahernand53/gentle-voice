@@ -10,10 +10,14 @@
  *   2. profiles.json active profile
  *   3. Named fallback profile (lab host, optional)
  *
- * Narrator selection (spec §5):
- *   A — role voice-ai present with model string → use role
- *   B — role absent → orchestrator entry, else activeModel from Pi
- *   C — role present but empty/unsafe model id → role_invalid (caller → deterministic)
+ * Narrator selection:
+ *   A — role has model and thinking → that role
+ *   B — role has model, no thinking → that model, thinking left unset
+ *   C — role exists with no model → profile orchestrator
+ *   D — role absent → profile orchestrator, else active Pi model
+ *   F — unsafe model id → role_invalid (caller shows the reason, deterministic TTS)
+ *   Pi standalone (no profile opt-in) → active Pi model only. No profiles file,
+ *   session binding, or frozen Gentle Shell snapshot.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -66,6 +70,12 @@ export interface ResolveNarratorOptions {
 	readonly preferredProfile?: string;
 	readonly activeModel?: { provider?: string; id: string };
 	readonly activeThinking?: NarrationThinkingLevel;
+	/**
+	 * `pi-standalone` does not treat a profiles file that merely exists on disk
+	 * as the active profile. Explicit `GENTLE_PI_CONFIG_HOME` or
+	 * `GENTLE_VOICE_USE_PROFILES=1` opts in. Gentle Shell host kinds still read it.
+	 */
+	readonly hostKind?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -268,6 +278,31 @@ export function resolveNarratorFromProfiles(
 	const roleName = options.roleName?.trim() || DEFAULT_VOICE_AI_ROLE;
 	const env = options.env ?? process.env;
 	const configHome = options.configHome ?? resolveGentleConfigHome(env);
+	const profileOptIn = Boolean(env.GENTLE_PI_CONFIG_HOME?.trim())
+		|| env.GENTLE_VOICE_USE_PROFILES === "1";
+
+	// Pi --extension must not inherit a Gentle Shell profile that happens to
+	// be on disk or frozen in-process. The narrator is the live Pi model.
+	if (options.hostKind === "pi-standalone" && !profileOptIn) {
+		const active = activeModelRef(options.activeModel, options.activeThinking);
+		if (active) {
+			return {
+				status: "ready",
+				source: "active_model_fallback",
+				model: active,
+				note: "pi-standalone uses the active Pi model",
+			};
+		}
+		return {
+			status: "role_invalid",
+			source: "role_invalid",
+			role: roleName,
+			requestedRef: "(none)",
+			reason: "pi-standalone has no active model",
+		};
+	}
+
+	const allowProfileFile = options.hostKind !== "pi-standalone" || profileOptIn;
 
 	const sessionBinding = readSessionBindingSnapshot(options.sessionId);
 	const frozen = sessionBinding ? undefined : readFrozenProfileSnapshot(options.sessionId);
@@ -283,7 +318,7 @@ export function resolveNarratorFromProfiles(
 		profileName = frozen.name;
 		routing = frozen.modelProfiles;
 		profileOrigin = "frozen";
-	} else {
+	} else if (allowProfileFile) {
 		const file = readProfilesFile(profilesJsonPath(configHome));
 		if (file) {
 			const name =
@@ -300,7 +335,7 @@ export function resolveNarratorFromProfiles(
 	}
 
 	// Freeze copies roles only (GS strips orchestrator). Case B still needs that profile's orchestrator.
-	if (routing && profileName && !routing[PROFILE_ORCHESTRATOR_KEY]?.model) {
+	if (allowProfileFile && routing && profileName && !routing[PROFILE_ORCHESTRATOR_KEY]?.model) {
 		const file = readProfilesFile(profilesJsonPath(configHome));
 		const saved = file?.profiles[profileName]?.[PROFILE_ORCHESTRATOR_KEY];
 		if (saved?.model) {
@@ -318,8 +353,11 @@ export function resolveNarratorFromProfiles(
 		const roleExists = roleEntry !== undefined;
 
 		if (roleExists) {
-			const model = entryToModel(roleEntry);
-			if (!model) {
+			const rawModel = roleEntry?.model?.trim() ?? "";
+			// Case B: a model without thinking stays that model. Do not copy the
+			// orchestrator's thinking onto the narrator.
+			const model = rawModel ? entryToModel(roleEntry) : undefined;
+			if (!model && rawModel) {
 				return {
 					status: "role_invalid",
 					source: "role_invalid",
@@ -328,25 +366,27 @@ export function resolveNarratorFromProfiles(
 					...(orchestratorRef ? { orchestratorRef } : {}),
 					...(orchestratorThinking ? { orchestratorThinking } : {}),
 					role: roleName,
-					requestedRef: roleEntry?.model?.trim() || "(empty)",
+					requestedRef: rawModel,
 					reason: "voice-ai role has no valid model id",
 				};
 			}
-			return {
-				status: "ready",
-				source: "role",
-				...(profileName ? { profileName } : {}),
-				...(profileOrigin ? { profileOrigin } : {}),
-				...(orchestratorRef ? { orchestratorRef } : {}),
-				...(orchestratorThinking ? { orchestratorThinking } : {}),
-				role: roleName,
-				model,
-			};
+			if (model) {
+				return {
+					status: "ready",
+					source: "role",
+					...(profileName ? { profileName } : {}),
+					...(profileOrigin ? { profileOrigin } : {}),
+					...(orchestratorRef ? { orchestratorRef } : {}),
+					...(orchestratorThinking ? { orchestratorThinking } : {}),
+					role: roleName,
+					model,
+				};
+			}
 		}
 
-		// Case B — role absent: orchestrator entry, then active model.
 		const orch = entryToModel(routing[PROFILE_ORCHESTRATOR_KEY], options.activeThinking);
 		if (orch) {
+			const emptyRole = roleExists && !(roleEntry?.model?.trim());
 			return {
 				status: "ready",
 				source: "orchestrator_fallback",
@@ -355,7 +395,9 @@ export function resolveNarratorFromProfiles(
 				orchestratorRef: orch.ref,
 				...(orchestratorThinking ? { orchestratorThinking } : {}),
 				model: orch,
-				note: `role ${roleName} absent; using profile orchestrator`,
+				note: emptyRole
+					? "voice-ai has no model configured"
+					: `role ${roleName} absent; using profile orchestrator`,
 			};
 		}
 	}

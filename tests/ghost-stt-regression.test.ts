@@ -53,6 +53,24 @@ test("gate: Whisper silence hallucinations rejected by no_speech_seen (not word 
 	}
 });
 
+test("gate: a click of voiced audio does not auto-submit", () => {
+	const r = gateUtteranceForAutoSubmit({
+		text: "El Perú.",
+		captureMeta: meta(true, { voicedMs: 40, durationMs: 1400 }),
+	});
+	assert.equal(r.accept, false);
+	assert.equal(r.reason, "voiced_too_short");
+});
+
+test("gate: a cancelled capture does not auto-submit", () => {
+	const r = gateUtteranceForAutoSubmit({
+		text: "El Perú.",
+		captureMeta: meta(true, { endReason: "stop", voicedMs: 900 }),
+	});
+	assert.equal(r.accept, false);
+	assert.equal(r.reason, "cancelled");
+});
+
 test("gate: legitimate Perú / no with speechSeen accepted", () => {
 	for (const text of ["Voy a Perú el lunes", "no quiero eso ahora"]) {
 		const r = gateUtteranceForAutoSubmit({

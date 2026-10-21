@@ -13,14 +13,17 @@
 ## Pipeline
 
 1. Orchestrator (e.g. DeepSeek) produces the **written** reply (tools, agents, screen).
-2. Gentle Voice resolves narrator:
-   - **A** — role `voice-ai` with valid model → that model
-   - **B** — role absent → profile orchestrator / active Pi model (second inference only)
-   - **C** — role present but invalid / missing in registry → **deterministic** Speech Renderer (no silent swap)
-   - **D** — disabled / API fail / timeout → deterministic; **Esc** → cancel, no playback
-3. Narrated text goes to the selected TTS engine after settle. Piper is the default. VibeVoice uses PCM when that engine is selected and `pw-play` supports float32.
+2. Gentle Voice resolves the narrator and makes a **second** model call (`after_settle`, final assistant text only):
+   - **Pi standalone** — the active Pi model. No `profiles.json`, session binding, or frozen Gentle Shell profile unless `GENTLE_VOICE_USE_PROFILES=1` or `GENTLE_PI_CONFIG_HOME` is set.
+   - **A** — Gentle Shell role `voice-ai` with model and thinking → that role
+   - **B** — role has a model and no thinking → that model; thinking is not copied from the orchestrator
+   - **C** — role exists with no model → profile orchestrator, second call
+   - **D** — role absent → profile orchestrator, else the active model
+   - **E** — Voice AI explicitly off → no second call; Speech Renderer only
+   - **F** — invalid id, missing registry entry, or provider error → the reason is shown and Speech Renderer speaks the written reply. Models are not swapped silently.
+3. Narrated text goes to the already selected TTS engine (VibeVoice PCM or Piper WAV). Changing the narrator does not change the voice. The visible reply is never rewritten. Code blocks are narrated (“left on screen”), not skipped. Credentials and destructive confirmations stay literal.
 
-The visible reply is **never** rewritten.
+Narration stays `after_settle`. Pi `text_delta` is provisional: tools, thinking, and a later rewrite can still follow. There is no host event that marks a sentence as the final user-facing answer before `turn_end`. Starting Voice AI on those fragments would speak unconfirmed text. The barge microphone opens during `NARRATING` and `SYNTHESIZING`, and again during playback. It stays closed while the orchestrator is still in tools.
 
 ## Commands
 
@@ -65,7 +68,7 @@ Model/effort live in `/gentle:profiles`, not duplicated in GV config.
 
 ## Pi standalone
 
-Without GS profiles: narrator = active Pi model (Case B / active_model_fallback). TTS stays local. Voice AI can be disabled.
+`pi --extension` is `pi-standalone`. One active model, two calls: the written reply, then the narration. Switching the Pi model switches the next narration. A Gentle Shell profile on disk is not the narrator. TTS stays the installed engine. Voice AI turns on automatically while conversation is on, unless the preference or `GENTLE_VOICE_AI=0` says off. While the second call runs, the widget shows `NARRATING`.
 
 ## converse-style (separate)
 

@@ -15,12 +15,14 @@ import type {
 	CaptureSession,
 } from "../contracts.ts";
 import { AbortError, ignoreUnhandledAbort, onAbort, throwIfAborted } from "../process-cancel.ts";
-import type { EnergyVadOptions } from "../vad/energy-vad.ts";
+import { createEnergyVad, type EnergyVadOptions } from "../vad/energy-vad.ts";
 import {
 	resolveEnergyVadOnly,
 	resolveVad,
 	type VadBackendPreference,
 } from "../vad/resolve-vad.ts";
+import { describeDefaultInput } from "./input-device.ts";
+import type { ListenStats } from "../vad/listen-stats.ts";
 import type { VadEngine } from "../vad/types.ts";
 import { pcmS16leToWav } from "./wav.ts";
 
@@ -83,6 +85,11 @@ export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {
 	return {
 		id: "linux-pipewire-capture",
 		async availability(): Promise<AdapterAvailability> {
+			if (options.pwRecordPath?.includes("/")) {
+				return await isExecutable(pwRecordPath)
+					? { status: "ready", detail: pwRecordPath }
+					: { status: "unavailable", reason: "pw_record_missing" };
+			}
 			if (await isExecutable("/usr/bin/pw-record")) {
 				return { status: "ready", detail: "/usr/bin/pw-record" };
 			}
@@ -97,6 +104,7 @@ export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {
 			vadArmDelayMs: armFromStart,
 			onFirstPcm,
 			onSpeechSeen,
+			onListenStats,
 			holdVadEnd,
 		}): Promise<CaptureSession> {
 			throwIfAborted(signal);
@@ -124,18 +132,9 @@ export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {
 				|| 60_000;
 			const maxBytes = sampleRateHz * channels * 2 * (maxListenMs / 1000 + 2);
 
-			const child = spawn(
-				bin,
-				[`--rate=${sampleRateHz}`, `--channels=${channels}`, "--format=s16", "-"],
-				{ stdio: ["ignore", "pipe", "pipe"] },
-			);
-
-			let stderr = "";
-			child.stderr?.on("data", (c: Buffer) => {
-				stderr += c.toString("utf8");
-			});
-
+			const device = await describeDefaultInput();
 			let vad: VadEngine | undefined;
+			let lastStatsAt = 0;
 			if (options.vadEngine) {
 				vad = options.vadEngine;
 				options.onVadResolved?.({ backend: vad.backend });
@@ -168,6 +167,87 @@ export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {
 				});
 			}
 
+			if (signal.aborted) {
+				await vad?.dispose?.();
+				throwIfAborted(signal);
+			}
+			const child = spawn(
+				bin,
+				[`--rate=${sampleRateHz}`, `--channels=${channels}`, "--format=s16", "-"],
+				{ stdio: ["ignore", "pipe", "pipe"] },
+			);
+
+			let stderr = "";
+			child.stderr?.on("data", (c: Buffer) => {
+				stderr += c.toString("utf8");
+			});
+
+			const publishStats = (force = false) => {
+				if (!onListenStats) return;
+				const now = Date.now();
+				if (!force && now - lastStatsAt < 250) return;
+				lastStatsAt = now;
+				const speechSeen = vad?.state.speechSeen ?? false;
+				const phase = vad?.state.phase ?? "leading_silence";
+				const stats: ListenStats = {
+					stage: !speechSeen ? "capturing" : phase === "speech" ? "voice" : "waiting_end",
+					device,
+					backend: vad?.backend ?? "none",
+					chunks: rmsCount,
+					peak: peakRms,
+					rms: rmsCount > 0 ? rmsSum / rmsCount : 0,
+					durationMs: Math.max(0, now - startedAt),
+					...(vad?.state.speechProb !== undefined ? { speechProb: vad.state.speechProb } : {}),
+					voicedMs: vad?.state.voicedMs ?? 0,
+					speechSeen,
+					phase,
+					whisper: "not_called",
+					...(vad?.inferenceError ? { inferenceError: vad.inferenceError } : {}),
+				};
+				try {
+					onListenStats(stats);
+				} catch {
+					/* diag only */
+				}
+			};
+
+			// Keep a local fallback up to date, but only let it decide a turn if
+			// Silero actually fails. Low model probabilities alone are not failure.
+			const energyFallback = vad?.backend === "silero"
+				? createEnergyVad({ ...(typeof options.vad === "object" ? options.vad : {}), sampleRateHz, maxListenMs })
+				: undefined;
+			const ownedVad = vad;
+			let released = false;
+			const releaseVad = () => {
+				if (released) return;
+				released = true;
+				ownedVad?.setUpdateListener?.(undefined);
+				void Promise.resolve().then(() => ownedVad?.dispose?.()).catch(() => {});
+			};
+			const noteSpeech = () => {
+				if (released) return;
+				if (vad?.inferenceError && energyFallback && vad !== energyFallback) {
+					const reason = `silero_inference_failed:${vad.inferenceError}`;
+					vad.setUpdateListener?.(undefined);
+					vad = energyFallback;
+					options.onVadResolved?.({ backend: "energy", fallbackReason: reason });
+				}
+				if (vad?.state.speechSeen && speechSeenAt === undefined) {
+					speechSeenAt = Date.now();
+					if (!speechSeenNotified) {
+						speechSeenNotified = true;
+						try {
+							speechSeenHook?.({ captureId: id, atMs: speechSeenAt });
+						} catch {
+							/* diag only */
+						}
+					}
+				}
+				if (vad?.state.phase === "ended" && !holdVadEnd?.()) endCapture("vad");
+				publishStats(vad?.state.speechSeen === true);
+			};
+			vad?.setUpdateListener?.(noteSpeech);
+
 			let settle!: (chunk: AudioChunk) => void;
 			let fail!: (err: Error) => void;
 			let settled = false;
@@ -197,6 +277,7 @@ export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {
 					durationMs: Math.max(0, Date.now() - startedAt),
 					peakRms,
 					meanRms: rmsCount > 0 ? rmsSum / rmsCount : 0,
+					...(vad?.state.voicedMs !== undefined ? { voicedMs: vad.state.voicedMs } : {}),
 					...(firstPcmAt !== undefined ? { firstPcmLatencyMs: firstPcmAt - startedAt } : {}),
 					...(speechSeenAt !== undefined ? { speechSeenLatencyMs: speechSeenAt - startedAt } : {}),
 				};
@@ -210,6 +291,7 @@ export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {
 			};
 
 			const endCapture = (reason: "vad" | "stop" | "max") => {
+				if (settled || endReason !== "unknown") return;
 				endReason = reason;
 				if (!child.killed) child.kill("SIGINT");
 				if (reason === "vad") options.onVadEnd?.();
@@ -247,9 +329,14 @@ export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {
 				}
 				// Echo hold: buffer PCM (pre-roll for immediate speech) but do not
 				// let VAD end until armed — residual TTS must not close the turn.
-				if (now - startedAt < vadArmDelayMs) return;
+				if (now - startedAt < vadArmDelayMs) {
+					publishStats();
+					return;
+				}
 				const beforeSpeech = vad?.state.speechSeen ?? false;
+				if (vad !== energyFallback) energyFallback?.pushPcmS16le(c);
 				const ended = vad?.pushPcmS16le(c) ?? false;
+				publishStats();
 				if (!beforeSpeech && vad?.state.speechSeen && speechSeenAt === undefined) {
 					speechSeenAt = now;
 					if (!speechSeenNotified) {
@@ -265,10 +352,12 @@ export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {
 			});
 
 			child.once("error", (err) => {
+				releaseVad();
 				fail(err instanceof Error ? err : new Error(String(err)));
 			});
 
-			child.once("exit", () => {
+			child.once("close", () => {
+				releaseVad();
 				if (settled) return;
 				const pcm = Buffer.concat(pcmChunks);
 				if (pcm.byteLength < 64) {
@@ -284,6 +373,7 @@ export function createPipewireCaptureAdapter(options: PipewireCaptureOptions = {
 			});
 
 			const detach = onAbort(signal, () => {
+				releaseVad();
 				if (!child.killed) child.kill("SIGTERM");
 				fail(new AbortError());
 			});

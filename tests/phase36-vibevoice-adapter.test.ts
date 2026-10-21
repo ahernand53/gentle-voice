@@ -12,6 +12,7 @@ import {
 	labVibeVoicePresent,
 	probeVibeVoiceReadiness,
 	resolveVibeVoiceOnColdStart,
+	vibeVoiceWorkerModelDir,
 	VIBEVOICE_MODEL_SAFETENSORS_BYTES,
 	VIBEVOICE_PREFERRED_VOICE,
 	VIBEVOICE_TTS_ID,
@@ -47,6 +48,13 @@ function fakeInstall(home: string, opts?: { modelBytes?: number; nested?: boolea
 		JSON.stringify({ authorized: true, status: "installed" }),
 	);
 }
+
+test("worker model path is the directory that contains the weights", () => {
+	const dir = "/var/lib/gentle-voice/vibevoice/models/VibeVoice-Realtime-0.5B";
+	assert.equal(vibeVoiceWorkerModelDir(dir), dir);
+	assert.equal(vibeVoiceWorkerModelDir(join(dir, "model.safetensors")), dir);
+	assert.notEqual(vibeVoiceWorkerModelDir(dir), join(dir, ".."));
+});
 
 test("probe: nested model dir path is accepted when size matches", () => {
 	const home = mkdtempSync(join(tmpdir(), "gv-vv-nested-"));
@@ -105,11 +113,16 @@ test("explicit vibevoice without a ready engine stays off Piper's path", () => {
 	const prevTts = process.env.GENTLE_VOICE_TTS;
 	const prevHome = process.env.GENTLE_VOICE_VIBEVOICE_HOME;
 	const prevVoiceHome = process.env.GENTLE_VOICE_HOME;
+	const prevUserHome = process.env.HOME;
+	const prevXdg = process.env.XDG_DATA_HOME;
+	const isolated = mkdtempSync(join(tmpdir(), "gv-vv-absent-"));
 	try {
 		delete process.env.GENTLE_VOICE_LAB;
 		delete process.env.GENTLE_VOICE_REAL_AUDIO;
 		delete process.env.GENTLE_VOICE_VIBEVOICE_HOME;
 		delete process.env.GENTLE_VOICE_HOME;
+		process.env.HOME = isolated;
+		process.env.XDG_DATA_HOME = join(isolated, "share");
 		process.env.GENTLE_VOICE_TTS = "vibevoice";
 		const resolved = resolveLabVoiceAdapters({ forceStub: false });
 		assert.notEqual(resolved.ttsKind, "vibevoice");
@@ -119,6 +132,10 @@ test("explicit vibevoice without a ready engine stays off Piper's path", () => {
 		else process.env.GENTLE_VOICE_VIBEVOICE_HOME = prevHome;
 		if (prevVoiceHome === undefined) delete process.env.GENTLE_VOICE_HOME;
 		else process.env.GENTLE_VOICE_HOME = prevVoiceHome;
+		if (prevUserHome === undefined) delete process.env.HOME;
+		else process.env.HOME = prevUserHome;
+		if (prevXdg === undefined) delete process.env.XDG_DATA_HOME;
+		else process.env.XDG_DATA_HOME = prevXdg;
 		if (prevLab === undefined) delete process.env.GENTLE_VOICE_LAB;
 		else process.env.GENTLE_VOICE_LAB = prevLab;
 		if (prevAudio === undefined) delete process.env.GENTLE_VOICE_REAL_AUDIO;

@@ -11,13 +11,14 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { access, constants, mkdir, readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import type { AdapterAvailability, AudioChunk, TtsAdapter, TtsResult } from "../contracts.ts";
 import { AbortError, onAbort, throwIfAborted } from "../process-cancel.ts";
 import { isGentleVoiceLabPathsAllowed } from "../runtime/lab-gate.ts";
+import { resolveGentleVoiceStorage } from "../runtime/storage.ts";
 import { isWavBuffer } from "./wav.ts";
 import {
 	decodeVibeVoicePcmLine,
@@ -61,7 +62,14 @@ export function resolveVibeVoiceHome(env: NodeJS.ProcessEnv = process.env): stri
 	if (explicit) return explicit;
 	const voiceHome = env.GENTLE_VOICE_HOME?.trim();
 	if (voiceHome) return join(voiceHome, "vibevoice");
-	return join(env.HOME ?? "/tmp", ".gentle-voice", "vibevoice");
+	return join(resolveGentleVoiceStorage({ env }).dataDir, "vibevoice");
+}
+
+/** Directory `from_pretrained` reads. A weights file is accepted; its parent is not. */
+export function vibeVoiceWorkerModelDir(modelPath: string): string {
+	const base = basename(modelPath);
+	if (base === "model.safetensors" || base === "pytorch_model.bin") return dirname(modelPath);
+	return modelPath;
 }
 
 function resolveModelDir(home: string): string | undefined {
@@ -151,6 +159,16 @@ export function probeVibeVoiceReadiness(
 			ready: false,
 			home,
 			reason: `model_size_mismatch:${modelBytes}`,
+			voice,
+			modelPath,
+			modelBytes,
+		};
+	}
+	if (!existsSync(join(modelDir, "config.json")) || !existsSync(join(modelDir, "preprocessor_config.json"))) {
+		return {
+			ready: false,
+			home,
+			reason: "model_config_missing",
 			voice,
 			modelPath,
 			modelBytes,
@@ -251,6 +269,14 @@ type Pending = {
 	pcmSeq?: number;
 };
 
+/** A failed engine boot cannot be repaired by changing PCM to WAV. */
+export class VibeVoiceWorkerStartupError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "VibeVoiceWorkerStartupError";
+	}
+}
+
 class VibeVoiceWorkerClient {
 	#proc: ChildProcessWithoutNullStreams | undefined;
 	#pending = new Map<string, Pending>();
@@ -320,9 +346,9 @@ class VibeVoiceWorkerClient {
 		const env: NodeJS.ProcessEnv = {
 			...process.env,
 			GENTLE_VOICE_VIBEVOICE_HOME: home,
-			GENTLE_VOICE_VIBEVOICE_MODEL: modelPath,
+			GENTLE_VOICE_VIBEVOICE_MODEL: vibeVoiceWorkerModelDir(modelPath),
 			GENTLE_VOICE_VIBEVOICE_VOICE_PT: voicePt,
-			GENTLE_VOICE_VIBEVOICE_DTYPE: process.env.GENTLE_VOICE_VIBEVOICE_DTYPE?.trim() || "bfloat16",
+			GENTLE_VOICE_VIBEVOICE_DTYPE: process.env.GENTLE_VOICE_VIBEVOICE_DTYPE?.trim() || "auto",
 			HF_HOME: join(home, "cache", "huggingface"),
 			TRANSFORMERS_CACHE: join(home, "cache", "huggingface"),
 			TORCH_HOME: join(home, "cache", "torch"),
@@ -346,10 +372,12 @@ class VibeVoiceWorkerClient {
 			this.#lineChain = this.#lineChain.then(() => this.#onLine(line)).catch(() => {});
 		});
 
-		proc.once("exit", () => {
-			const err = new Error(
-				`vibevoice worker exited${this.#stderr.trim() ? `: ${this.#stderr.trim().slice(0, 300)}` : ""}`,
-			);
+		proc.once("close", async (code, signal) => {
+			// stdout's structured load error must be handled before a generic exit.
+			await this.#lineChain;
+			if (this.#proc !== proc) return;
+			const message = `vibevoice worker exited (code=${code}, signal=${signal ?? "none"})${this.#stderr.trim() ? `: ${this.#stderr.trim().slice(-600)}` : ""}`;
+			const err = this.#hello ? new Error(message) : new VibeVoiceWorkerStartupError(message);
 			for (const [, p] of this.#pending) {
 				if (!p.cancelled) p.reject(err);
 			}
@@ -363,7 +391,7 @@ class VibeVoiceWorkerClient {
 		await new Promise<void>((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.#pending.delete("__boot__");
-				reject(new Error("vibevoice worker hello timeout (120s)"));
+				reject(new VibeVoiceWorkerStartupError("vibevoice worker hello timeout (120s)"));
 				this.killHard();
 			}, 120_000);
 			this.#pending.set("__boot__", {
@@ -411,6 +439,13 @@ class VibeVoiceWorkerClient {
 				this.#pending.delete("__boot__");
 				boot.resolve(msg);
 			}
+			return;
+		}
+		if (op === "error" && !msg.req_id && this.#pending.has("__boot__")) {
+			const boot = this.#pending.get("__boot__")!;
+			this.#pending.delete("__boot__");
+			this.#setState("ERROR");
+			boot.reject(new VibeVoiceWorkerStartupError(String(msg.error ?? "vibevoice_load_failed")));
 			return;
 		}
 		const reqId = typeof msg.req_id === "string" ? msg.req_id : "";

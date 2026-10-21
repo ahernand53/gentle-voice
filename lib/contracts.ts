@@ -3,6 +3,8 @@
  * Phase 0: no real audio I/O — implementations may be stubs.
  */
 
+import type { ListenStats } from "./vad/listen-stats.ts";
+
 /** High-level voice interaction mode. */
 export type VoiceMode = "dictation" | "conversation" | "silent";
 
@@ -60,6 +62,8 @@ export interface CaptureSegmentMeta {
 	readonly peakRms: number;
 	/** Mean frame RMS over the segment (0–1). */
 	readonly meanRms: number;
+	/** Samples above the VAD speech threshold. Absent on older captures. */
+	readonly voicedMs?: number;
 	/** ms from capture start to first PCM sample (mic truly ready). */
 	readonly firstPcmLatencyMs?: number;
 	/** ms from capture start to first VAD speechSeen. */
@@ -100,6 +104,8 @@ export interface CaptureAdapter {
 		onFirstPcm?: (info: { captureId: string; atMs: number }) => void;
 		/** First time VAD/energy marks speech in this capture (incremental STT arm). */
 		onSpeechSeen?: (info: { captureId: string; atMs: number }) => void;
+		/** Throttled by the caller. Levels only — the adapter does not write audio. */
+		onListenStats?: (stats: ListenStats) => void;
 	}): Promise<CaptureSession>;
 }
 

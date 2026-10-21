@@ -14,13 +14,19 @@ import {
 import {
 	checkNarrationFidelity,
 	createVoiceNarrationAdapter,
+	formatVoiceAiStatus,
+	NARRATION_SYSTEM_PROMPT,
 	parseModelRef,
 	readFrozenProfileSnapshot,
 	resolveGentleConfigHome,
 	resolveNarratorFromProfiles,
 	resolveVoiceAiActivation,
+	shouldPreferLiteralNarration,
 	type NarrationModelHost,
 } from "../lib/narration/index.ts";
+import { resolveChromeActivity } from "../lib/widget-chrome.ts";
+import { initialVoiceState } from "../lib/state-machine.ts";
+import { classifyAssistantForSpeech } from "../lib/narration/final-speech-eligibility.ts";
 import { parseVoiceArgs } from "../lib/commands.ts";
 
 test("parseModelRef splits provider/id", () => {
@@ -81,7 +87,7 @@ test("resolveNarrator: Case B role absent → orchestrator", () => {
 	}
 });
 
-test("resolveNarrator: Case C empty voice-ai model → role_invalid", () => {
+test("resolveNarrator: empty voice-ai model uses the orchestrator once", () => {
 	const dir = mkdtempSync(join(tmpdir(), "gv-vai-c-"));
 	writeFileSync(
 		join(dir, "profiles.json"),
@@ -98,9 +104,40 @@ test("resolveNarrator: Case C empty voice-ai model → role_invalid", () => {
 		}),
 	);
 	const res = resolveNarratorFromProfiles({ configHome: dir });
-	assert.equal(res.status, "role_invalid");
-	if (res.status === "role_invalid") {
-		assert.equal(res.source, "role_invalid");
+	assert.equal(res.status, "ready");
+	if (res.status === "ready") {
+		assert.equal(res.source, "orchestrator_fallback");
+		assert.equal(res.model.ref, "nan/deepseek-v4-flash");
+		assert.equal(res.note, "voice-ai has no model configured");
+	}
+});
+
+test("resolveNarrator: pi-standalone ignores a profiles file on disk", () => {
+	const dir = mkdtempSync(join(tmpdir(), "gv-vai-standalone-"));
+	writeFileSync(
+		join(dir, "profiles.json"),
+		JSON.stringify({
+			kind: "gentle-pi.agent_model_profiles",
+			version: 1,
+			active: "OpenSource",
+			profiles: {
+				OpenSource: {
+					orchestrator: { model: "nan/mimo-v2.6-flash" },
+					"voice-ai": { model: "nan/mimo-v2.6-flash" },
+				},
+			},
+		}),
+	);
+	const res = resolveNarratorFromProfiles({
+		configHome: dir,
+		hostKind: "pi-standalone",
+		activeModel: { provider: "nan", id: "deepseek-v4-flash" },
+	});
+	assert.equal(res.status, "ready");
+	if (res.status === "ready") {
+		assert.equal(res.source, "active_model_fallback");
+		assert.equal(res.model.ref, "nan/deepseek-v4-flash");
+		assert.equal(res.profileOrigin, undefined);
 	}
 });
 
@@ -442,4 +479,300 @@ test("voice-ai, barge-in and tts parse without lab mode", () => {
 		if (prev === undefined) delete process.env.GENTLE_VOICE_LAB;
 		else process.env.GENTLE_VOICE_LAB = prev;
 	}
+});
+
+test("pi-standalone ignores a frozen Gentle Shell voice-ai role", () => {
+	const key = Symbol.for("gentle-pi:session-profile-freeze");
+	const holder = globalThis as Record<symbol, { frozen: Map<string, unknown> } | undefined>;
+	const previous = holder[key];
+	holder[key] = {
+		frozen: new Map([
+			[
+				"sess-pi",
+				{
+					profile: {
+						name: "OpenSource",
+						modelProfiles: {
+							"voice-ai": { model: "nan/mimo-v2.6-flash", thinking: "low" },
+							orchestrator: { model: "nan/deepseek-v4-flash", thinking: "high" },
+						},
+					},
+				},
+			],
+		]),
+	};
+	try {
+		const res = resolveNarratorFromProfiles({
+			hostKind: "pi-standalone",
+			sessionId: "sess-pi",
+			env: {},
+			activeModel: { provider: "openai", id: "gpt" },
+			activeThinking: "high",
+		});
+		assert.equal(res.status, "ready");
+		if (res.status === "ready") {
+			assert.equal(res.source, "active_model_fallback");
+			assert.equal(res.model.ref, "openai/gpt");
+			assert.equal(res.profileName, undefined);
+		}
+	} finally {
+		if (previous === undefined) delete holder[key];
+		else holder[key] = previous;
+	}
+});
+
+test("changing the active Pi model changes the narrator", () => {
+	const first = resolveNarratorFromProfiles({
+		hostKind: "pi-standalone",
+		env: {},
+		activeModel: { provider: "openai", id: "gpt" },
+	});
+	const second = resolveNarratorFromProfiles({
+		hostKind: "pi-standalone",
+		env: {},
+		activeModel: { provider: "nan", id: "deepseek-v4-flash" },
+	});
+	assert.equal(first.status, "ready");
+	assert.equal(second.status, "ready");
+	if (first.status === "ready" && second.status === "ready") {
+		assert.equal(first.model.ref, "openai/gpt");
+		assert.equal(second.model.ref, "nan/deepseek-v4-flash");
+	}
+});
+
+test("voice-ai model without thinking keeps that model", () => {
+	const dir = mkdtempSync(join(tmpdir(), "gv-vai-nothink-"));
+	writeFileSync(
+		join(dir, "profiles.json"),
+		JSON.stringify({
+			kind: "gentle-pi.agent_model_profiles",
+			version: 1,
+			active: "OpenSource",
+			profiles: {
+				OpenSource: {
+					orchestrator: { model: "nan/deepseek-v4-flash", thinking: "high" },
+					"voice-ai": { model: "nan/mimo-v2.6-flash" },
+				},
+			},
+		}),
+	);
+	const res = resolveNarratorFromProfiles({
+		configHome: dir,
+		env: {},
+		activeThinking: "high",
+	});
+	assert.equal(res.status, "ready");
+	if (res.status === "ready") {
+		assert.equal(res.source, "role");
+		assert.equal(res.model.ref, "nan/mimo-v2.6-flash");
+		assert.equal(res.model.thinking, undefined);
+		assert.equal(res.orchestratorRef, "nan/deepseek-v4-flash");
+	}
+});
+
+test("a fenced code answer is rewritten, not read aloud", async () => {
+	const src = [
+		"Para crear un índice en PostgreSQL puedes ejecutar:",
+		"```sql",
+		"CREATE INDEX idx_cliente_rut ON cliente(rut);",
+		"```",
+		"Esto mejora las consultas por RUT y agrega costo en las escrituras.",
+	].join("\n");
+	assert.equal(shouldPreferLiteralNarration(src), false);
+	assert.match(NARRATION_SYSTEM_PROMPT, /No inventes/);
+	let calls = 0;
+	const spoken = "En PostgreSQL puedes acelerar las búsquedas por RUT creando un índice. Te dejé el comando en pantalla. Los índices también cuestan en las escrituras.";
+	const host: NarrationModelHost = {
+		find: () => ({ id: "gpt" }),
+		hasConfiguredAuth: () => true,
+		complete: async () => {
+			calls += 1;
+			return { content: [{ type: "text", text: spoken }] };
+		},
+	};
+	const adapter = createVoiceNarrationAdapter({
+		config: {
+			enabled: true,
+			role: "voice-ai",
+			onError: "deterministic",
+			style: "natural",
+			timeoutMs: 5_000,
+			maxInputChars: 4000,
+		},
+		host,
+		resolveOverride: () => ({
+			status: "ready",
+			source: "active_model_fallback",
+			model: { provider: "openai", id: "gpt", ref: "openai/gpt" },
+		}),
+	});
+	const before = src;
+	const r = await adapter.narrate({ text: src });
+	assert.equal(src, before);
+	assert.equal(calls, 1);
+	assert.equal(r.ok, true);
+	if (r.ok && r.path === "llm") {
+		assert.equal(r.text, spoken);
+		assert.notEqual(r.text, src);
+		assert.doesNotMatch(r.text, /CREATE INDEX/);
+	} else {
+		assert.fail(`expected llm narration, got ${JSON.stringify(r)}`);
+	}
+});
+
+test("provider error is a visible deterministic fallback and does not call twice", async () => {
+	let calls = 0;
+	const notices: string[] = [];
+	const host: NarrationModelHost = {
+		find: () => ({ id: "gpt" }),
+		hasConfiguredAuth: () => true,
+		complete: async () => {
+			calls += 1;
+			throw new Error("provider down");
+		},
+	};
+	const adapter = createVoiceNarrationAdapter({
+		config: {
+			enabled: true,
+			role: "voice-ai",
+			onError: "deterministic",
+			style: "natural",
+			timeoutMs: 5_000,
+			maxInputChars: 2000,
+		},
+		host,
+		onNotice: (message) => {
+			notices.push(message);
+		},
+		resolveOverride: () => ({
+			status: "ready",
+			source: "active_model_fallback",
+			model: { provider: "openai", id: "gpt", ref: "openai/gpt" },
+		}),
+	});
+	const src = "El índice cubre la columna rut y no está creado todavía.";
+	const r = await adapter.narrate({ text: src });
+	assert.equal(calls, 1);
+	assert.equal(r.ok, true);
+	if (r.ok) {
+		assert.equal(r.path, "deterministic");
+		assert.equal(r.text, src);
+		assert.match(r.reason, /api_error/);
+	}
+	assert.equal(notices.length, 1);
+	assert.match(notices[0] ?? "", /api_error/);
+});
+
+test("disabled narration does not call the model", async () => {
+	let calls = 0;
+	const host: NarrationModelHost = {
+		find: () => ({ id: "gpt" }),
+		complete: async () => {
+			calls += 1;
+			return { content: [{ type: "text", text: "no" }] };
+		},
+	};
+	const adapter = createVoiceNarrationAdapter({
+		config: {
+			enabled: false,
+			role: "voice-ai",
+			onError: "deterministic",
+			style: "natural",
+			timeoutMs: 1000,
+			maxInputChars: 500,
+		},
+		host,
+	});
+	const r = await adapter.narrate({ text: "Texto escrito que debe quedar igual." });
+	assert.equal(calls, 0);
+	assert.equal(r.ok, true);
+	if (r.ok) assert.equal(r.path, "deterministic");
+});
+
+test("tool and thinking parts are not narration input", () => {
+	const decision = classifyAssistantForSpeech(
+		{
+			role: "assistant",
+			content: [
+				{ type: "thinking", thinking: "internal plan" },
+				{ type: "toolCall", name: "bash" },
+			],
+		},
+		"completed",
+	);
+	assert.equal(decision.speak, false);
+	assert.equal(decision.text, "");
+});
+
+test("status labels reflect host and narrator source", () => {
+	const pi = formatVoiceAiStatus({
+		hostKind: "pi-standalone",
+		enabled: true,
+		activationSource: "automatic",
+		streaming: "after_settle",
+		resolution: {
+			status: "ready",
+			source: "active_model_fallback",
+			model: { provider: "openai", id: "gpt", ref: "openai/gpt" },
+			note: "pi-standalone uses the active Pi model",
+		},
+		orchestratorLabel: "openai/gpt",
+		diagnostics: { enabled: true, lastPath: "llm", lastInvokedRef: "openai/gpt", lastLatencyMs: 40 },
+	});
+	assert.match(pi, /Host: pi-standalone/);
+	assert.match(pi, /Narrator source: active-pi-model/);
+	assert.match(pi, /Narrator: openai\/gpt/);
+	assert.match(pi, /Narration mode: llm-rewrite/);
+	assert.match(pi, /Last result: llm/);
+
+	const gs = formatVoiceAiStatus({
+		hostKind: "gs-isolated",
+		enabled: true,
+		activationSource: "automatic",
+		streaming: "after_settle",
+		resolution: {
+			status: "ready",
+			source: "role",
+			profileName: "OpenSource",
+			orchestratorRef: "nan/deepseek-v4-flash",
+			model: { provider: "nan", id: "mimo-v2.6-flash", ref: "nan/mimo-v2.6-flash", thinking: "low" },
+		},
+		orchestratorLabel: "nan/deepseek-v4-flash",
+		diagnostics: { enabled: true },
+	});
+	assert.match(gs, /Host: gentle-shell/);
+	assert.match(gs, /Profile: OpenSource/);
+	assert.match(gs, /Narrator source: profile-role/);
+	assert.match(gs, /Orchestrator: nan\/deepseek-v4-flash/);
+	assert.match(gs, /Narrator: nan\/mimo-v2.6-flash/);
+
+	const fallback = formatVoiceAiStatus({
+		hostKind: "gs-bundled",
+		enabled: true,
+		activationSource: "automatic",
+		streaming: "after_settle",
+		resolution: {
+			status: "ready",
+			source: "orchestrator_fallback",
+			model: { provider: "nan", id: "deepseek-v4-flash", ref: "nan/deepseek-v4-flash" },
+			note: "voice-ai has no model configured",
+		},
+		orchestratorLabel: "nan/deepseek-v4-flash",
+		diagnostics: { enabled: true },
+	});
+	assert.match(fallback, /Narrator source: orchestrator-fallback/);
+	assert.match(fallback, /Narration mode: llm-rewrite/);
+});
+
+test("widget shows NARRATING while the second call is in flight", () => {
+	const line = resolveChromeActivity(
+		initialVoiceState({ enabled: true, phase: "awaiting_agent" }),
+		{ narrating: true },
+	);
+	assert.equal(line, "NARRATING");
+	const working = resolveChromeActivity(
+		initialVoiceState({ enabled: true, phase: "awaiting_agent" }),
+		{},
+	);
+	assert.equal(working, "WORKING");
 });

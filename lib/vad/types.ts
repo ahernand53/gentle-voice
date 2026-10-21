@@ -12,6 +12,8 @@ export interface VadEngineState {
 	readonly speechSeen: boolean;
 	readonly elapsedMs: number;
 	readonly silenceMs: number;
+	/** Milliseconds of samples actually above the speech threshold. */
+	readonly voicedMs?: number;
 	/** Backend that produced this state (for chrome / metrics). */
 	readonly backend: VadBackendId;
 	/** Last speech probability when Silero; undefined for energy. */
@@ -24,6 +26,13 @@ export interface VadEngine {
 	/** Feed interleaved s16le mono PCM. Returns true when utterance should end. */
 	pushPcmS16le(chunk: Uint8Array): boolean;
 	reset(): void;
+	/**
+	 * Async engines (Silero/ORT) update speech and end after push returns.
+	 * Capture uses this so the turn can close without waiting for another chunk.
+	 */
+	setUpdateListener?(listener: (() => void) | undefined): void;
+	/** Last inference error. Empty when the model is scoring frames. */
+	readonly inferenceError?: string;
 	/** Optional async dispose (ORT session). */
 	dispose?(): void | Promise<void>;
 }

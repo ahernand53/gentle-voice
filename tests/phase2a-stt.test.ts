@@ -187,8 +187,10 @@ test("simulated: empty transcript notifies without submit", async () => {
 
 test("real: lab resolve picks whisper+pipewire when REAL paths exist", { skip: skipWithoutLab }, () => {
 	const prev = process.env.GENTLE_VOICE_REAL_AUDIO;
+	const prevTts = process.env.GENTLE_VOICE_TTS;
 	applyDeveloperLabEnv();
 	process.env.GENTLE_VOICE_REAL_AUDIO = "1";
+	process.env.GENTLE_VOICE_TTS = "piper";
 	try {
 		const lab = resolveLabVoiceAdapters({ forceStub: false });
 		assert.equal(lab.captureKind, "pipewire");
@@ -200,6 +202,8 @@ test("real: lab resolve picks whisper+pipewire when REAL paths exist", { skip: s
 	} finally {
 		if (prev === undefined) delete process.env.GENTLE_VOICE_REAL_AUDIO;
 		else process.env.GENTLE_VOICE_REAL_AUDIO = prev;
+		if (prevTts === undefined) delete process.env.GENTLE_VOICE_TTS;
+		else process.env.GENTLE_VOICE_TTS = prevTts;
 	}
 });
 

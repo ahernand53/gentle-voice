@@ -38,8 +38,11 @@ if not DEFAULT_VOICE.is_file():
 	DEFAULT_VOICE = ROOT / "voices" / "sp-Spk0_woman.pt"
 
 MODEL_PATH = Path(os.environ.get("GENTLE_VOICE_VIBEVOICE_MODEL", str(DEFAULT_MODEL)))
+# from_pretrained wants the model directory. The adapter used to pass the weights file.
+if MODEL_PATH.is_file():
+	MODEL_PATH = MODEL_PATH.parent
 VOICE_PT = Path(os.environ.get("GENTLE_VOICE_VIBEVOICE_VOICE_PT", str(DEFAULT_VOICE)))
-DTYPE_NAME = os.environ.get("GENTLE_VOICE_VIBEVOICE_DTYPE", "bfloat16")
+DTYPE_NAME = os.environ.get("GENTLE_VOICE_VIBEVOICE_DTYPE", "auto")
 CFG_SCALE = float(os.environ.get("GENTLE_VOICE_VIBEVOICE_CFG", "1.5"))
 DDPM_STEPS = int(os.environ.get("GENTLE_VOICE_VIBEVOICE_DDPM_STEPS", "5"))
 WARMUP_TEXT = os.environ.get("GENTLE_VOICE_VIBEVOICE_WARMUP_TEXT", ".").strip() or "."
@@ -56,9 +59,33 @@ def _state(name: str, **extra) -> None:
 	_emit({"op": "state", "state": name, **extra})
 
 
+def _resolve_dtype(torch, device: str, requested: str):
+	if requested == "auto":
+		if device != "cuda":
+			return torch.float32, "float32"
+		# The checkpoint and the voice cache are bfloat16. float16 on Turing
+		# leaves query in Half and key/value in float, and SDPA rejects the call.
+		name = "bfloat16"
+	else:
+		name = requested
+	if name not in ("float32", "float16", "bfloat16"):
+		raise ValueError(f"unsupported_dtype:{name}")
+	return getattr(torch, name), name
+
+
+def _assert_model_files() -> None:
+	"""Fail before torch. A wrong directory used to import CUDA and then miss the weights."""
+	weights = MODEL_PATH / "model.safetensors"
+	config = MODEL_PATH / "config.json"
+	if weights.is_file() and config.is_file():
+		return
+	raise FileNotFoundError(f"model_files_missing:{MODEL_PATH}")
+
+
 def _load():
 	timeline: dict = {"t0_sec": 0.0}
 	wall0 = time.perf_counter()
+	_assert_model_files()
 
 	_state("STARTING")
 	t_import0 = time.perf_counter()
@@ -74,9 +101,9 @@ def _load():
 	_emit({"op": "timeline", "phase": "imports_done", **timeline})
 
 	device = "cuda" if torch.cuda.is_available() else "cpu"
-	dtype = torch.float16 if DTYPE_NAME == "float16" else torch.bfloat16
+	dtype, dtype_name = _resolve_dtype(torch, device, DTYPE_NAME)
 	timeline["device"] = device
-	timeline["dtype"] = DTYPE_NAME
+	timeline["dtype"] = dtype_name
 
 	if device == "cuda":
 		t_cuda0 = time.perf_counter()
@@ -119,7 +146,7 @@ def _load():
 
 	ctx = {
 		"device": device,
-		"dtype": DTYPE_NAME,
+		"dtype": dtype_name,
 		"processor": processor,
 		"model": model,
 		"cached": cached,
@@ -296,7 +323,29 @@ def _synth(
 	return metrics
 
 
+def _probe() -> int:
+	"""Process start only. Does not import the model or touch the GPU."""
+	model = MODEL_PATH / "model.safetensors"
+	if not model.is_file() or not VOICE_PT.is_file():
+		_emit({"op": "error", "error": "probe_files_missing", "loaded": False})
+		return 4
+	try:
+		import importlib.metadata as metadata
+		import importlib.util as util
+		version = metadata.version("vibevoice")
+		if not version or util.find_spec("torch") is None:
+			_emit({"op": "error", "error": "probe_deps_missing", "loaded": False})
+			return 4
+	except Exception as exc:
+		_emit({"op": "error", "error": f"probe_deps_missing:{type(exc).__name__}", "loaded": False})
+		return 4
+	_emit({"op": "probe", "ok": True, "loaded": False, "voice": VOICE_PT.name})
+	return 0
+
+
 def main() -> int:
+	if os.environ.get("GENTLE_VOICE_VIBEVOICE_PROBE") == "1":
+		return _probe()
 	try:
 		ctx, timeline = _load()
 	except Exception as e:
@@ -310,6 +359,10 @@ def main() -> int:
 		)
 		_state("ERROR", error=str(e))
 		return 1
+
+	if os.environ.get("GENTLE_VOICE_VIBEVOICE_PROBE") == "synthesize":
+		_emit({"op": "probe", "ok": True, "loaded": True, "synthesized": True, "timeline": timeline})
+		return 0
 
 	_emit(
 		{

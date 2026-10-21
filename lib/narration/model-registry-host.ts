@@ -45,6 +45,11 @@ export function extractCompletionText(result: {
 	errorMessage?: string;
 }): string {
 	if (result.errorMessage) return "";
+	if (typeof result.content === "string") return result.content.trim();
+	if (result.content && typeof result.content === "object" && !Array.isArray(result.content)) {
+		const text = (result.content as { text?: unknown }).text;
+		if (typeof text === "string") return text.trim();
+	}
 	return extractAssistantPlainText({
 		role: "assistant",
 		content: result.content as never,

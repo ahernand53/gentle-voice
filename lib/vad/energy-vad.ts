@@ -29,6 +29,7 @@ export function createEnergyVad(options: EnergyVadOptions = {}): VadEngine {
 	let speechSeen = false;
 	let elapsedSamples = 0;
 	let silenceSamples = 0;
+	let voicedSamples = 0;
 	/** Samples collected after hang threshold while draining post-roll. */
 	let postRollSamples = 0;
 
@@ -42,6 +43,7 @@ export function createEnergyVad(options: EnergyVadOptions = {}): VadEngine {
 				speechSeen,
 				elapsedMs: samplesToMs(elapsedSamples),
 				silenceMs: samplesToMs(silenceSamples),
+				voicedMs: samplesToMs(voicedSamples),
 				backend: "energy",
 			};
 		},
@@ -59,6 +61,7 @@ export function createEnergyVad(options: EnergyVadOptions = {}): VadEngine {
 				}
 				if (amp >= speechThreshold) {
 					speechSeen = true;
+					voicedSamples += 1;
 					silenceSamples = 0;
 					postRollSamples = 0;
 					phase = "speech";
@@ -92,6 +95,7 @@ export function createEnergyVad(options: EnergyVadOptions = {}): VadEngine {
 			speechSeen = false;
 			elapsedSamples = 0;
 			silenceSamples = 0;
+			voicedSamples = 0;
 			postRollSamples = 0;
 		},
 	};
