@@ -93,6 +93,7 @@ import {
 } from "../lib/widget-chrome.ts";
 import { voiceWidgetContent } from "../lib/visual/compact-widget.ts";
 import { runFirstRunPreparation } from "../lib/runtime/first-run.ts";
+import { ensureVoiceAiRoles } from "../lib/profiles/voice-ai-role.ts";
 import { formatCompatMarkdown } from "../lib/runtime/compat-matrix.ts";
 import {
 	createEditorHistoryBinding,
@@ -908,6 +909,44 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 				return;
 			}
 
+			if (parsed.command === "add") {
+				const arg = parsed.rest.trim().toLowerCase();
+				if (arg !== "voice-ai") {
+					ctx.ui.notify("Usage: /gentle:voice add voice-ai", "warning");
+					return;
+				}
+				let result: ReturnType<typeof ensureVoiceAiRoles>;
+				try {
+					result = ensureVoiceAiRoles();
+				} catch (error) {
+					ctx.ui.notify(
+						`voice-ai role was not added: ${error instanceof Error ? error.message : String(error)}`,
+						"warning",
+					);
+					return;
+				}
+				if (result.status === "missing") {
+					ctx.ui.notify(
+						`No profiles file at ${result.path}. Create a profile with /gentle:profiles, then run /gentle:voice add voice-ai.`,
+						"warning",
+					);
+					return;
+				}
+				if (result.status === "invalid") {
+					ctx.ui.notify(`profiles.json at ${result.path} was not changed (${result.reason ?? "invalid"}).`, "warning");
+					return;
+				}
+				if (result.status === "unchanged") {
+					ctx.ui.notify("voice-ai is already on every profile. Set the model and effort in /gentle:models.", "info");
+					return;
+				}
+				ctx.ui.notify(
+					`Added an empty voice-ai role to ${result.added.join(", ")}. Set the model and effort in /gentle:models.`,
+					"info",
+				);
+				return;
+			}
+
 			if (parsed.command === "voice-ai") {
 				bindNarrationHost(ctx);
 				const arg = parsed.rest.trim().toLowerCase();
@@ -1676,6 +1715,11 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 			attachEscape(lastCtx);
 			const duplicate = readDuplicateVoiceWarning();
 			if (duplicate) lastCtx.ui.notify(duplicate, "warning");
+			try {
+				ensureVoiceAiRoles();
+			} catch {
+				/* a profiles write must not block the voice session */
+			}
 			void ensureAutomaticFirstRun(lastCtx);
 			updateChrome(lastCtx, session);
 		});

@@ -11,7 +11,7 @@
 
 Gentle Voice is a [Pi package](https://pi.dev/docs/latest/packages) for conversation: microphone, speech-to-text, and text-to-speech. It runs inside Pi Coding Agent on its own, and inside Gentle Shell when that host is present. Gentle Shell is not required.
 
-[`gentle-voice@0.1.6`](https://www.npmjs.com/package/gentle-voice) is the published npm package for both hosts. npm `latest` is `0.1.6`. Pi lists it at [pi.dev/packages/gentle-voice](https://pi.dev/packages/gentle-voice). Cloning this repository is not the install.
+[`gentle-voice@0.1.7`](https://www.npmjs.com/package/gentle-voice) is the published npm package for both hosts. npm `latest` is `0.1.7`. Pi lists it at [pi.dev/packages/gentle-voice](https://pi.dev/packages/gentle-voice). Cloning this repository is not the install.
 
 ## Install
 
@@ -33,7 +33,13 @@ gentle-shell install npm:gentle-voice
 
 Gentle Shell does not need a separate `pi install`. It installs the same `gentle-voice` package.
 
-The active Gentle AI profile must have a role named `voice-ai`, and that role must have a model assigned. `voice-ai` is the role name, not a model name. In `/gentle:profiles`, add the role to the active profile and point it at a model Pi can already call:
+The active Gentle AI profile must have a role named `voice-ai`. `voice-ai` is the role name, not a model name. When `profiles.json` already exists, the first session adds an empty `voice-ai` role to every profile. It does not set a model or a thinking level. Assign both in `/gentle:models`. If the file does not exist, nothing is created. Create a profile with `/gentle:profiles`, then run `/gentle:voice add voice-ai`. The same command adds the empty role to every existing profile when you want to do it by hand.
+
+```json
+"voice-ai": {}
+```
+
+After you assign a model, the entry looks like this. Thinking is optional:
 
 ```json
 "voice-ai": { "model": "provider/model-id", "thinking": "low" }
@@ -96,6 +102,7 @@ Whisper runs locally after you accept its download. The transcript that can be s
 | `/gentle:voice tts piper\|vibevoice` | Engine for this session |
 | `/gentle:voice vibevoice-setup` | Short confirm, then install. `plan` prints the full terms |
 | `/gentle:voice voice-ai on\|off\|status` | Optional second model that writes the spoken text |
+| `/gentle:voice add voice-ai` | Add an empty `voice-ai` role to every existing profile. Model and effort stay unset |
 | `/gentle:voice barge-in on\|off\|status` | Interrupt playback by speaking |
 
 `/gentle:voice tts kokoro` exists only when a lab Kokoro install is present. It is not the product default.
@@ -110,7 +117,7 @@ Voice AI writes a short spoken version after the agent settles. It does not chan
 
 On Pi alone, the narrator is the active Pi model. Switching that model switches the next narration. A Gentle AI profile on disk is not read.
 
-On Gentle Shell, create the `voice-ai` role on the active profile and assign it a model, as in [Install](#install). That assigned model is the narrator. It is not replaced by the active Pi model while the role has a valid model.
+On Gentle Shell, the empty `voice-ai` role is added to every existing profile. Assign its model and effort in `/gentle:models`, or run `/gentle:voice add voice-ai` when the profiles file was created later. That assigned model is the narrator. It is not replaced by the active Pi model while the role has a valid model.
 
 | Situation | What happens |
 | --- | --- |

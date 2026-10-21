@@ -1,0 +1,127 @@
+/**
+ * Production voice-ai role: empty entry on every existing profile, host-local file.
+ */
+import assert from "node:assert/strict";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { parseVoiceArgs, voiceHelpText } from "../lib/commands.ts";
+import { ensureVoiceAiRoles, resolveHostProfilesFile } from "../lib/profiles/voice-ai-role.ts";
+
+function profiles(body: Record<string, unknown>): string {
+	return `${JSON.stringify(
+		{
+			kind: "gentle-pi.agent_model_profiles",
+			version: 1,
+			active: "OpenSource",
+			profiles: body,
+		},
+		null,
+		2,
+	)}\n`;
+}
+
+test("add voice-ai is a public command", () => {
+	const parsed = parseVoiceArgs("add voice-ai");
+	assert.equal(parsed.command, "add");
+	assert.equal(parsed.rest, "voice-ai");
+	assert.equal(parsed.error, undefined);
+	assert.match(voiceHelpText(), /\/gentle:voice add voice-ai/);
+});
+
+test("bundled Gentle Shell writes its own profiles file", () => {
+	const root = mkdtempSync(join(tmpdir(), "gv-role-"));
+	const prefix = join(root, "gentle-shell");
+	const agent = join(prefix, "agent");
+	const piDir = join(root, "pi", "gentle-ai");
+	const gsFile = join(prefix, "config", "gentle-ai", "profiles.json");
+	mkdirSync(join(prefix, "config", "gentle-ai"), { recursive: true });
+	mkdirSync(piDir, { recursive: true });
+	const before = profiles({
+		OpenSource: { orchestrator: { model: "nan/glm", thinking: "high" }, "review-risk": { model: "nan/glm", thinking: "high" } },
+		claude: { orchestrator: { model: "anthropic/claude", thinking: "medium" } },
+	});
+	writeFileSync(gsFile, before);
+	writeFileSync(join(piDir, "profiles.json"), before);
+	const env = {
+		HOME: root,
+		GENTLE_SHELL_PREFIX: prefix,
+		GENTLE_PI_AGENT_HOME: agent,
+		GENTLE_SHELL_CONFIG_HOME: join(prefix, "gentle-ai"),
+	};
+	assert.equal(resolveHostProfilesFile(env), gsFile);
+	const result = ensureVoiceAiRoles(env);
+	assert.equal(result.status, "updated");
+	assert.deepEqual(result.added, ["OpenSource", "claude"]);
+	const written = JSON.parse(readFileSync(gsFile, "utf8")) as {
+		profiles: Record<string, Record<string, unknown>>;
+	};
+	assert.deepEqual(written.profiles.OpenSource["voice-ai"], {});
+	assert.deepEqual(written.profiles.OpenSource.orchestrator, { model: "nan/glm", thinking: "high" });
+	assert.deepEqual(written.profiles.claude["voice-ai"], {});
+	const pi = JSON.parse(readFileSync(join(piDir, "profiles.json"), "utf8")) as {
+		profiles: Record<string, Record<string, unknown>>;
+	};
+	assert.equal(pi.profiles.OpenSource["voice-ai"], undefined);
+});
+
+test("an existing voice-ai role is left alone", () => {
+	const root = mkdtempSync(join(tmpdir(), "gv-role-"));
+	const dir = join(root, ".pi", "gentle-ai");
+	mkdirSync(dir, { recursive: true });
+	const file = join(dir, "profiles.json");
+	writeFileSync(
+		file,
+		profiles({
+			OpenSource: {
+				orchestrator: { model: "nan/glm", thinking: "high" },
+				"voice-ai": { model: "nan/mimo-v2.6-flash", thinking: "low" },
+			},
+			other: { orchestrator: { model: "nan/glm", thinking: "high" } },
+		}),
+	);
+	const env = { HOME: root };
+	const result = ensureVoiceAiRoles(env);
+	assert.equal(result.status, "updated");
+	assert.deepEqual(result.added, ["other"]);
+	const written = JSON.parse(readFileSync(file, "utf8")) as {
+		profiles: Record<string, Record<string, { model?: string; thinking?: string }>>;
+	};
+	assert.equal(written.profiles.OpenSource["voice-ai"].model, "nan/mimo-v2.6-flash");
+	assert.equal(written.profiles.OpenSource["voice-ai"].thinking, "low");
+	assert.deepEqual(written.profiles.other["voice-ai"], {});
+});
+
+test("a missing profiles file is not created", () => {
+	const root = mkdtempSync(join(tmpdir(), "gv-role-"));
+	const marker = join(root, "shell", "gentle-ai");
+	const piFile = join(root, ".pi", "gentle-ai", "profiles.json");
+	mkdirSync(join(root, ".pi", "gentle-ai"), { recursive: true });
+	writeFileSync(piFile, profiles({ OpenSource: { orchestrator: { model: "nan/glm" } } }));
+	const env = {
+		HOME: root,
+		GENTLE_SHELL_CONFIG_HOME: marker,
+		GENTLE_PI_AGENT_HOME: join(root, ".gentle-shell", "agent"),
+	};
+	const result = ensureVoiceAiRoles(env);
+	assert.equal(result.status, "missing");
+	assert.equal(existsSync(join(marker, "profiles.json")), false);
+	const pi = JSON.parse(readFileSync(piFile, "utf8")) as { profiles: Record<string, Record<string, unknown>> };
+	assert.equal(pi.profiles.OpenSource["voice-ai"], undefined);
+});
+
+test("Pi standalone uses ~/.pi/gentle-ai", () => {
+	const root = mkdtempSync(join(tmpdir(), "gv-role-"));
+	const file = join(root, ".pi", "gentle-ai", "profiles.json");
+	mkdirSync(join(root, ".pi", "gentle-ai"), { recursive: true });
+	writeFileSync(file, profiles({ OpenSource: { orchestrator: { model: "nan/glm", thinking: "high" } } }));
+	const result = ensureVoiceAiRoles({ HOME: root });
+	assert.equal(result.path, file);
+	assert.equal(result.status, "updated");
+	const written = JSON.parse(readFileSync(file, "utf8")) as {
+		profiles: Record<string, Record<string, unknown>>;
+	};
+	assert.deepEqual(written.profiles.OpenSource["voice-ai"], {});
+	assert.deepEqual(written.profiles.OpenSource.orchestrator, { model: "nan/glm", thinking: "high" });
+});

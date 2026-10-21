@@ -37,6 +37,7 @@ export type VoiceCommandName =
 	| "purge"
 	| "stream"
 	| "voice-ai"
+	| "add"
 	| "barge-in"
 	| "tts"
 	| "vibevoice-setup"
