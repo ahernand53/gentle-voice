@@ -13,6 +13,12 @@ Gentle Voice is a [Pi package](https://pi.dev/docs/latest/packages) for conversa
 
 [`gentle-voice@0.1.8`](https://www.npmjs.com/package/gentle-voice) is the published npm package for both hosts. npm `latest` is `0.1.8`. Pi lists it at [pi.dev/packages/gentle-voice](https://pi.dev/packages/gentle-voice). Cloning this repository is not the install.
 
+## Demo
+
+Screen recording of Gentle Voice. Unmute to hear the audio.
+
+https://github.com/user-attachments/assets/f5892e57-ab71-4e04-9904-a0b35b091229
+
 ## Install
 
 Node.js ≥ 22.19. The tested audio path is Linux x64 with PipeWire. Windows and macOS are not supported.
