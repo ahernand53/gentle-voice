@@ -927,7 +927,12 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 				}
 				if (result.status === "missing") {
 					ctx.ui.notify(
-						`No profiles file at ${result.path}. Create a profile with /gentle:profiles, then run /gentle:voice add voice-ai.`,
+						[
+							result.agentCreated
+								? `voice-ai is now listed in /gentle:models (${result.agentPath}).`
+								: `voice-ai agent file: ${result.agentPath}.`,
+							`No profiles file at ${result.path}. Create a profile with /gentle:profiles, then run /gentle:voice add voice-ai.`,
+						].join("\n"),
 						"warning",
 					);
 					return;
@@ -937,11 +942,19 @@ export function createVoiceExtension(pi: VoiceHostApi, options: VoiceExtensionOp
 					return;
 				}
 				if (result.status === "unchanged") {
-					ctx.ui.notify("voice-ai is already on every profile. Set the model and effort in /gentle:models.", "info");
+					ctx.ui.notify(
+						"voice-ai is on every profile and in /gentle:models. Set the model and effort there, then save.",
+						"info",
+					);
 					return;
 				}
 				ctx.ui.notify(
-					`Added an empty voice-ai role to ${result.added.join(", ")}. Set the model and effort in /gentle:models.`,
+					[
+						result.added.length > 0
+							? `Added an empty voice-ai role to ${result.added.join(", ")}.`
+							: "voice-ai now matches the model saved in /gentle:models.",
+						"Open /gentle:models, choose voice-ai, and save the model and effort.",
+					].join("\n"),
 					"info",
 				);
 				return;

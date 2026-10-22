@@ -2,6 +2,12 @@
 
 All notable changes to Gentle Voice are documented here.
 
+## [0.1.8] — 2026-10-21
+
+### Fixed
+
+- `/gentle:models` lists `voice-ai`. The panel only shows agents that have a markdown file, so an empty profile role never appeared there. The file is created without a model. Saving a model and an effort in that panel is what the narrator uses.
+
 ## [0.1.7] — 2026-10-21
 
 ### Added
