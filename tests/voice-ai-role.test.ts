@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parseVoiceArgs, voiceHelpText } from "../lib/commands.ts";
-import { ensureVoiceAiRoles, resolveHostProfilesFile } from "../lib/profiles/voice-ai-role.ts";
+import { ensureVoiceAiRoles, resolveHostProfilesFile, voiceAiAgentPath } from "../lib/profiles/voice-ai-role.ts";
+import { resolveNarratorFromProfiles } from "../lib/narration/profile-role-resolver.ts";
 
 function profiles(body: Record<string, unknown>): string {
 	return `${JSON.stringify(
@@ -124,4 +125,52 @@ test("Pi standalone uses ~/.pi/gentle-ai", () => {
 	};
 	assert.deepEqual(written.profiles.OpenSource["voice-ai"], {});
 	assert.deepEqual(written.profiles.OpenSource.orchestrator, { model: "nan/glm", thinking: "high" });
+});
+
+test("voice-ai.md is created so /gentle:models can list it", () => {
+	const root = mkdtempSync(join(tmpdir(), "gv-role-"));
+	const agent = join(root, "agent");
+	const dir = join(root, ".pi", "gentle-ai");
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, "profiles.json"), profiles({ OpenSource: { orchestrator: { model: "nan/glm" } } }));
+	const env = { HOME: root, GENTLE_PI_AGENT_HOME: agent, GENTLE_PI_CONFIG_HOME: dir };
+	const result = ensureVoiceAiRoles(env);
+	const file = voiceAiAgentPath(env);
+	assert.equal(result.agentCreated, true);
+	assert.equal(result.agentPath, file);
+	const text = readFileSync(file, "utf8");
+	assert.match(text, /^name:\s*voice-ai$/m);
+	assert.doesNotMatch(text, /^model:/m);
+	writeFileSync(file, `${text}model: nan/kept\n`);
+	const again = ensureVoiceAiRoles(env);
+	assert.equal(again.agentCreated, false);
+	assert.match(readFileSync(file, "utf8"), /model: nan\/kept/);
+});
+
+test("a model saved by /gentle:models is copied onto the empty role", () => {
+	const root = mkdtempSync(join(tmpdir(), "gv-role-"));
+	const dir = join(root, ".pi", "gentle-ai");
+	mkdirSync(dir, { recursive: true });
+	const file = join(dir, "profiles.json");
+	writeFileSync(file, profiles({ OpenSource: { orchestrator: { model: "nan/glm", thinking: "high" }, "voice-ai": {} } }));
+	writeFileSync(
+		join(dir, "models.json"),
+		`${JSON.stringify({ "voice-ai": { model: "nan/deepseek-v4-flash", thinking: "high" } }, null, 2)}\n`,
+	);
+	const env = { HOME: root, GENTLE_PI_CONFIG_HOME: dir, GENTLE_PI_AGENT_HOME: join(root, "agent") };
+	const result = ensureVoiceAiRoles(env);
+	assert.equal(result.status, "updated");
+	const written = JSON.parse(readFileSync(file, "utf8")) as {
+		profiles: Record<string, Record<string, { model?: string; thinking?: string }>>;
+	};
+	assert.equal(written.profiles.OpenSource["voice-ai"].model, "nan/deepseek-v4-flash");
+	assert.equal(written.profiles.OpenSource["voice-ai"].thinking, "high");
+	const resolved = resolveNarratorFromProfiles({
+		env,
+		configHome: dir,
+		hostKind: "gs-isolated",
+	});
+	assert.equal(resolved.status, "ready");
+	assert.equal(resolved.source, "role");
+	if (resolved.status === "ready") assert.equal(resolved.model.ref, "nan/deepseek-v4-flash");
 });

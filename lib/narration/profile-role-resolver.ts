@@ -16,12 +16,15 @@
  *   C — role exists with no model → profile orchestrator
  *   D — role absent → profile orchestrator, else active Pi model
  *   F — unsafe model id → role_invalid (caller shows the reason, deterministic TTS)
+ *   `/gentle:models` writes `models.json`. That voice-ai entry wins over the profile
+ *   role, including an empty entry (inherit).
  *   Pi standalone (no profile opt-in) → active Pi model only. No profiles file,
  *   session binding, or frozen Gentle Shell snapshot.
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { readVoiceAiModelsAssignment } from "../profiles/voice-ai-role.ts";
 import type {
 	NarrationThinkingLevel,
 	NarratorModelRef,
@@ -347,10 +350,18 @@ export function resolveNarratorFromProfiles(
 	const orchestratorThinking = orchestratorEntry?.thinking;
 
 	if (routing) {
-		const roleEntry = Object.prototype.hasOwnProperty.call(routing, roleName)
+		const savedNarrator = readVoiceAiModelsAssignment(configHome);
+		const profileRole = Object.prototype.hasOwnProperty.call(routing, roleName)
 			? routing[roleName]
 			: undefined;
-		const roleExists = roleEntry !== undefined;
+		const savedEntry = savedNarrator.present
+			? normalizeEntry({
+				...(savedNarrator.model ? { model: savedNarrator.model } : {}),
+				...(savedNarrator.thinking ? { thinking: savedNarrator.thinking } : {}),
+			})
+			: undefined;
+		const roleEntry = savedNarrator.present ? (savedEntry ?? {}) : profileRole;
+		const roleExists = savedNarrator.present || profileRole !== undefined;
 
 		if (roleExists) {
 			const rawModel = roleEntry?.model?.trim() ?? "";
