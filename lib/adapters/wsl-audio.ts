@@ -10,6 +10,7 @@
 import { execFile } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 export const WSLG_PULSE_SERVER = "/mnt/wslg/PulseServer";
@@ -85,11 +86,23 @@ export function createNodeWslAudioIo(env: NodeJS.ProcessEnv = process.env): WslA
 				return [];
 			}
 		},
+		// Own timer + SIGKILL: pactl catches execFile's SIGTERM and exits 0 with empty output.
 		run: (cmd, args, options) =>
 			new Promise((resolve) => {
-				execFile(cmd, [...args], { timeout: options?.timeoutMs ?? COMMAND_TIMEOUT_MS, env }, (error, stdout, stderr) => {
-					resolve({ ok: !error, stdout: String(stdout), stderr: String(stderr) });
+				const timeoutMs = options?.timeoutMs ?? COMMAND_TIMEOUT_MS;
+				let timedOut = false;
+				const child = execFile(cmd, [...args], { env }, (error, stdout, stderr) => {
+					clearTimeout(timer);
+					resolve({
+						ok: !error && !timedOut,
+						stdout: String(stdout),
+						stderr: timedOut ? `timed out after ${timeoutMs} ms` : String(stderr),
+					});
 				});
+				const timer = setTimeout(() => {
+					timedOut = true;
+					child.kill("SIGKILL");
+				}, timeoutMs);
 			}),
 		writeText: async (path, content) => {
 			await mkdir(dirname(path), { recursive: true });
@@ -104,7 +117,7 @@ export function isWsl(env: NodeJS.ProcessEnv, io: WslAudioIo): boolean {
 }
 
 function pipewireDropInDir(env: NodeJS.ProcessEnv): string {
-	const home = env.HOME?.trim() || "";
+	const home = env.HOME?.trim() || homedir();
 	const xdgConfig = env.XDG_CONFIG_HOME?.trim() || join(home, ".config");
 	return join(xdgConfig, "pipewire", "pipewire.conf.d");
 }
@@ -202,12 +215,15 @@ async function restartInactiveBridge(host: WslAudioHost, io: WslAudioIo): Promis
 		host.notify(hint, "warning");
 		return { kind: "bridge-inactive" };
 	}
-	const [cmd, ...args] = WSL_SYSTEMCTL_RESTART;
-	const result = await io.run(cmd!, args);
-	if (!result.ok) {
-		const reason = (result.stderr ?? "").trim() || "systemctl failed";
-		host.notify(`\`${restart}\` failed (${reason}).`, "warning");
-		return { kind: "services-failed", reason };
+	// enable too: a first attempt may have written the drop-in and then failed to enable.
+	for (const command of [WSL_SYSTEMCTL_ENABLE, WSL_SYSTEMCTL_RESTART]) {
+		const [cmd, ...args] = command;
+		const result = await io.run(cmd!, args);
+		if (!result.ok) {
+			const reason = (result.stderr ?? "").trim() || "systemctl failed";
+			host.notify(`\`${command.join(" ")}\` failed (${reason}).`, "warning");
+			return { kind: "services-failed", reason };
+		}
 	}
 	host.notify("PipeWire restarted. The WSLg bridge is loaded again.", "info");
 	return { kind: "ready" };

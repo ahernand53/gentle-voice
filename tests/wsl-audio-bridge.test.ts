@@ -8,6 +8,7 @@ import {
 	WSL_PACTL_TIMEOUT_MS,
 	WSL_SYSTEMCTL_ENABLE,
 	WSL_SYSTEMCTL_RESTART,
+	createNodeWslAudioIo,
 	driveWslAudioBridge,
 	planWslAudioBridge,
 	wslBridgeConfigPath,
@@ -226,7 +227,11 @@ test("a bridge file whose tunnel never loaded offers a service restart, not a re
 	assert.deepEqual(state.writes, []);
 	assert.equal(h.confirms.length, 1);
 	assert.match(h.confirms[0].message, /systemctl --user restart pipewire\.service wireplumber\.service/);
-	assert.deepEqual(state.runs.filter((r) => r.startsWith("systemctl")), [WSL_SYSTEMCTL_RESTART.join(" ")]);
+	// enable too: a first attempt may have written the drop-in and then failed to enable.
+	assert.deepEqual(state.runs.filter((r) => r.startsWith("systemctl")), [
+		WSL_SYSTEMCTL_ENABLE.join(" "),
+		WSL_SYSTEMCTL_RESTART.join(" "),
+	]);
 });
 
 test("a bridge with PipeWire down is inactive and declining restarts nothing", async () => {
@@ -295,6 +300,31 @@ test("bridge path follows XDG_CONFIG_HOME", () => {
 		"/tmp/xdg/pipewire/pipewire.conf.d/gentle-voice-wslg.conf",
 	);
 	assert.equal(wslBridgeConfigPath(env), OUR_CONF);
+});
+
+test("bridge path is never relative when HOME is empty", async () => {
+	const { isAbsolute } = await import("node:path");
+	assert.ok(isAbsolute(wslBridgeConfigPath({ HOME: "" })));
+	assert.ok(isAbsolute(wslBridgeConfigPath({})));
+});
+
+test("a command that ignores its timeout signal and exits 0 is still a failure", async () => {
+	const io = createNodeWslAudioIo();
+	const started = Date.now();
+	const result = await io.run(
+		process.execPath,
+		["-e", "process.on('SIGTERM', () => process.exit(0)); setTimeout(() => {}, 10000);"],
+		{ timeoutMs: 300 },
+	);
+	assert.equal(result.ok, false);
+	assert.match(result.stderr ?? "", /timed out after 300 ms/);
+	assert.ok(Date.now() - started < 5000);
+});
+
+test("a command that succeeds within its timeout is ok", async () => {
+	const io = createNodeWslAudioIo();
+	const result = await io.run(process.execPath, ["-e", "process.stdout.write('hi')"], { timeoutMs: 5000 });
+	assert.deepEqual({ ok: result.ok, stdout: result.stdout }, { ok: true, stdout: "hi" });
 });
 
 test("tunnel config targets WSLg RDPSource and RDPSink", () => {
