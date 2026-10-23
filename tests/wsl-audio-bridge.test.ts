@@ -23,6 +23,8 @@ interface FakeState {
 	osrelease?: string;
 	files: Map<string, string>;
 	sources?: string;
+	/** `wpctl status` output; undefined means wpctl failed (PipeWire down). */
+	wpctl?: string;
 	systemctlOk?: boolean;
 	runs: string[];
 	writes: string[];
@@ -43,6 +45,9 @@ function fakeIo(state: FakeState): WslAudioIo {
 					? { ok: false, stdout: "" }
 					: { ok: true, stdout: state.sources };
 			}
+			if (cmd === "wpctl") {
+				return state.wpctl === undefined ? { ok: false, stdout: "" } : { ok: true, stdout: state.wpctl };
+			}
 			if (cmd === "systemctl") return { ok: state.systemctlOk !== false, stdout: "", stderr: state.systemctlOk === false ? "Failed to connect to bus" : "" };
 			return { ok: false, stdout: "" };
 		},
@@ -52,6 +57,9 @@ function fakeIo(state: FakeState): WslAudioIo {
 		},
 	};
 }
+
+const WPCTL_WITH_MIC = "Audio\n ├─ Devices:\n │  \n ├─ Sinks:\n │  *   40. WSLg Speaker  [vol: 1.00]\n │  \n ├─ Sources:\n │  *   38. WSLg Microphone  [vol: 1.00]\n │  \n ├─ Source endpoints:\n │  \n └─ Streams:\n\nVideo\n ├─ Sources:\n │  \n";
+const WPCTL_NO_MIC = "Audio\n ├─ Devices:\n │  \n ├─ Sinks:\n │  \n ├─ Sources:\n │  \n ├─ Source endpoints:\n │  \n └─ Streams:\n\nVideo\n ├─ Sources:\n │  *   50. Some Camera\n";
 
 const RDP_SOURCES = "1\tRDPSink.monitor\tmodule-rdp-sink.c\ts16le 2ch 44100Hz\tSUSPENDED\n2\tRDPSource\tmodule-rdp-source.c\ts16le 1ch 44100Hz\tSUSPENDED\n";
 
@@ -65,6 +73,7 @@ function wslState(overrides: Partial<FakeState> = {}): FakeState {
 			["/usr/bin/pactl", ""],
 		]),
 		sources: RDP_SOURCES,
+		wpctl: WPCTL_WITH_MIC,
 		runs: [],
 		writes: [],
 		...overrides,
@@ -188,6 +197,29 @@ test("an existing drop-in that already tunnels WSLg counts as ready", async () =
 	assert.deepEqual(h.notes, []);
 });
 
+test("a bridge file whose tunnel never loaded offers a service restart, not a rewrite", async () => {
+	const state = wslState({ wpctl: WPCTL_NO_MIC });
+	state.files.set(OUR_CONF, wslTunnelConfig());
+	const h = host(true);
+	const plan = await driveWslAudioBridge(h, env, fakeIo(state));
+	assert.deepEqual(plan, { kind: "ready" });
+	assert.deepEqual(state.writes, []);
+	assert.equal(h.confirms.length, 1);
+	assert.match(h.confirms[0].message, /systemctl --user restart pipewire\.service wireplumber\.service/);
+	assert.deepEqual(state.runs.filter((r) => r.startsWith("systemctl")), [WSL_SYSTEMCTL_RESTART.join(" ")]);
+});
+
+test("a bridge with PipeWire down is inactive and declining restarts nothing", async () => {
+	const state = wslState({ wpctl: undefined });
+	state.files.set(OUR_CONF, wslTunnelConfig());
+	const h = host(false);
+	const plan = await driveWslAudioBridge(h, env, fakeIo(state));
+	assert.equal(plan.kind, "bridge-inactive");
+	assert.deepEqual(state.writes, []);
+	assert.ok(!state.runs.some((r) => r.startsWith("systemctl")));
+	assert.match(h.notes[0].message, /systemctl --user restart pipewire\.service wireplumber\.service/);
+});
+
 test("accepting the bridge writes the drop-in and enables then restarts user services", async () => {
 	const state = wslState();
 	const h = host(true);
@@ -253,6 +285,12 @@ test("tunnel config targets WSLg RDPSource and RDPSink", () => {
 	assert.match(conf, /tunnel\.mode = sink/);
 	assert.match(conf, /target\.object = "RDPSink"/);
 	assert.match(conf, /unix:\/mnt\/wslg\/PulseServer/);
+});
+
+test("both tunnels are nofail so a down WSLg server cannot keep PipeWire from starting", () => {
+	const conf = wslTunnelConfig();
+	assert.equal(conf.match(/libpipewire-module-pulse-tunnel/g)?.length, 2);
+	assert.equal(conf.match(/flags = \[ nofail \]/g)?.length, 2);
 });
 
 test("conversation setup prepares capture before it checks the microphone", async () => {

@@ -46,6 +46,8 @@ export type WslAudioPlan =
 	| { readonly kind: "wslg-unresponsive" }
 	| { readonly kind: "no-mic-source" }
 	| { readonly kind: "bridge-missing"; readonly configPath: string }
+	/** Drop-in exists, but PipeWire has no audio source (tunnel not loaded, or PipeWire down). */
+	| { readonly kind: "bridge-inactive" }
 	| { readonly kind: "services-failed"; readonly reason: string }
 	| { readonly kind: "ready" };
 
@@ -123,8 +125,10 @@ export function wslTunnelConfig(): string {
 	return [
 		"# Written by Gentle Voice. Bridges the WSLg PulseAudio server into PipeWire",
 		"# so pw-record and pw-play reach the Windows microphone and speakers.",
+		"# nofail: if WSLg is down, PipeWire still starts (without the tunnel).",
 		"context.modules = [",
 		"  { name = libpipewire-module-pulse-tunnel",
+		"    flags = [ nofail ]",
 		"    args = {",
 		"      tunnel.mode = source",
 		`      pulse.server.address = "unix:${WSLG_PULSE_SERVER}"`,
@@ -136,6 +140,7 @@ export function wslTunnelConfig(): string {
 		"    }",
 		"  }",
 		"  { name = libpipewire-module-pulse-tunnel",
+		"    flags = [ nofail ]",
 		"    args = {",
 		"      tunnel.mode = sink",
 		`      pulse.server.address = "unix:${WSLG_PULSE_SERVER}"`,
@@ -160,8 +165,21 @@ export async function planWslAudioBridge(env: NodeJS.ProcessEnv, io: WslAudioIo)
 	const sources = await io.run("pactl", ["list", "short", "sources"], { timeoutMs: WSL_PACTL_TIMEOUT_MS });
 	if (!sources.ok) return { kind: "wslg-unresponsive" };
 	if (!/\bRDPSource\b/.test(sources.stdout)) return { kind: "no-mic-source" };
-	if (hasBridge(env, io)) return { kind: "ready" };
-	return { kind: "bridge-missing", configPath: wslBridgeConfigPath(env) };
+	if (!hasBridge(env, io)) return { kind: "bridge-missing", configPath: wslBridgeConfigPath(env) };
+	const graph = await io.run("wpctl", ["status"], { timeoutMs: WSL_PACTL_TIMEOUT_MS });
+	return graph.ok && hasAudioSource(graph.stdout) ? { kind: "ready" } : { kind: "bridge-inactive" };
+}
+
+/** True when the Audio section of `wpctl status` lists at least one source node. */
+function hasAudioSource(status: string): boolean {
+	const lines = status.split("\n");
+	const start = lines.findIndex((line) => line.includes("Sources:"));
+	if (start < 0) return false;
+	for (const line of lines.slice(start + 1)) {
+		if (/[├└]─/.test(line)) break;
+		if (/\b\d+\.\s/.test(line)) return true;
+	}
+	return false;
 }
 
 function manualBridgeSteps(configPath: string): string {
@@ -171,6 +189,24 @@ function manualBridgeSteps(configPath: string): string {
 		`3. Run: ${WSL_SYSTEMCTL_RESTART.join(" ")}`,
 		"Then run /gentle:voice setup again.",
 	].join("\n");
+}
+
+async function restartInactiveBridge(host: WslAudioHost, io: WslAudioIo): Promise<WslAudioPlan> {
+	const restart = WSL_SYSTEMCTL_RESTART.join(" ");
+	const hint = `PipeWire has no WSLg microphone. The bridge is configured but not loaded, usually because WSLg was down when PipeWire started. Run: ${restart}`;
+	if (!host.confirm || !(await host.confirm("Reconnect the WSLg microphone", `${hint}\nGentle Voice can run it now, for your user only.`))) {
+		host.notify(hint, "warning");
+		return { kind: "bridge-inactive" };
+	}
+	const [cmd, ...args] = WSL_SYSTEMCTL_RESTART;
+	const result = await io.run(cmd!, args);
+	if (!result.ok) {
+		const reason = (result.stderr ?? "").trim() || "systemctl failed";
+		host.notify(`\`${restart}\` failed (${reason}).`, "warning");
+		return { kind: "services-failed", reason };
+	}
+	host.notify("PipeWire restarted. The WSLg bridge is loaded again.", "info");
+	return { kind: "ready" };
 }
 
 /**
@@ -211,6 +247,8 @@ export async function driveWslAudioBridge(
 				"warning",
 			);
 			return plan;
+		case "bridge-inactive":
+			return await restartInactiveBridge(host, io);
 		case "bridge-missing":
 			break;
 		case "services-failed":
