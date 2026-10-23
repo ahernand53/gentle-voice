@@ -73,7 +73,7 @@ function wslState(overrides: Partial<FakeState> = {}): FakeState {
 			["/usr/bin/pactl", ""],
 		]),
 		sources: RDP_SOURCES,
-		wpctl: WPCTL_WITH_MIC,
+		wpctl: WPCTL_NO_MIC,
 		runs: [],
 		writes: [],
 		...overrides,
@@ -186,8 +186,28 @@ test("pactl gets a short timeout so a hung WSLg server cannot stall setup", asyn
 	assert.ok(WSL_PACTL_TIMEOUT_MS <= 5_000);
 });
 
+test("a live WSLg source configured outside the user drop-ins counts as ready", async () => {
+	const state = wslState({ wpctl: WPCTL_WITH_MIC });
+	const h = host(true);
+	const plan = await driveWslAudioBridge(h, env, fakeIo(state));
+	assert.deepEqual(plan, { kind: "ready" });
+	assert.deepEqual(state.writes, []);
+	assert.deepEqual(h.confirms, []);
+	assert.deepEqual(h.notes, []);
+	assert.ok(!state.runs.some((r) => r.startsWith("systemctl")));
+});
+
+test("a live WSLg source is ready even while WSLg's server hangs new pactl clients", async () => {
+	const state = wslState({ wpctl: WPCTL_WITH_MIC, sources: undefined });
+	const h = host(true);
+	const plan = await driveWslAudioBridge(h, env, fakeIo(state));
+	assert.deepEqual(plan, { kind: "ready" });
+	assert.ok(!state.runs.some((r) => r.startsWith("pactl")));
+	assert.deepEqual(h.notes, []);
+});
+
 test("an existing drop-in that already tunnels WSLg counts as ready", async () => {
-	const state = wslState();
+	const state = wslState({ wpctl: WPCTL_WITH_MIC });
 	state.files.set(`${CONF_DIR}/wslg-tunnel.conf`, 'pulse.server.address = "unix:/mnt/wslg/PulseServer"');
 	const h = host(true);
 	const plan = await driveWslAudioBridge(h, env, fakeIo(state));

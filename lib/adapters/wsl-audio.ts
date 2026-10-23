@@ -162,12 +162,16 @@ export async function planWslAudioBridge(env: NodeJS.ProcessEnv, io: WslAudioIo)
 	if (REQUIRED_BINARIES.some((bin) => !io.exists(bin))) {
 		return { kind: "packages-missing", command: WSL_APT_COMMAND };
 	}
+	// A live source wins, wherever its tunnel is configured. Ask PipeWire first:
+	// WSLg's server can hang new pactl clients while an open tunnel keeps working.
+	const graph = await io.run("wpctl", ["status"], { timeoutMs: WSL_PACTL_TIMEOUT_MS });
+	if (graph.ok && hasAudioSource(graph.stdout)) return { kind: "ready" };
 	const sources = await io.run("pactl", ["list", "short", "sources"], { timeoutMs: WSL_PACTL_TIMEOUT_MS });
 	if (!sources.ok) return { kind: "wslg-unresponsive" };
 	if (!/\bRDPSource\b/.test(sources.stdout)) return { kind: "no-mic-source" };
-	if (!hasBridge(env, io)) return { kind: "bridge-missing", configPath: wslBridgeConfigPath(env) };
-	const graph = await io.run("wpctl", ["status"], { timeoutMs: WSL_PACTL_TIMEOUT_MS });
-	return graph.ok && hasAudioSource(graph.stdout) ? { kind: "ready" } : { kind: "bridge-inactive" };
+	return hasBridge(env, io)
+		? { kind: "bridge-inactive" }
+		: { kind: "bridge-missing", configPath: wslBridgeConfigPath(env) };
 }
 
 /** True when the Audio section of `wpctl status` lists at least one source node. */

@@ -200,7 +200,7 @@ WSLg exposes the Windows microphone and speakers only through its PulseAudio ser
 | No bridge yet | After you confirm, writes `~/.config/pipewire/pipewire.conf.d/gentle-voice-wslg.conf` and runs `systemctl --user enable --now pipewire.socket pipewire.service wireplumber.service`, then restarts both services |
 | Bridge configured, no source in PipeWire | After you confirm, runs `systemctl --user restart pipewire.service wireplumber.service` |
 
-The bridge is user-level only. Both tunnels are `nofail`: if WSLg's audio server is down when PipeWire starts, PipeWire still starts without them, and the next setup offers the restart. An existing drop-in that already points at `/mnt/wslg/PulseServer` is reused. `pipewire-pulse` is not enabled, because `PULSE_SERVER` already points at WSLg. The user services need `systemd=true` under `[boot]` in `/etc/wsl.conf`.
+A PipeWire graph that already lists an audio source counts as ready, wherever its tunnel is configured. The bridge is user-level only. Both tunnels are `nofail`: if WSLg's audio server is down when PipeWire starts, PipeWire still starts without them, and the next setup offers the restart. An existing drop-in that already points at `/mnt/wslg/PulseServer` is reused. `pipewire-pulse` is not enabled, because `PULSE_SERVER` already points at WSLg. The user services need `systemd=true` under `[boot]` in `/etc/wsl.conf`.
 
 ## Where data lives
 
