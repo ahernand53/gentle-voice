@@ -11,7 +11,8 @@ import { execFile } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+// WSL paths are always POSIX, even when tests run on Windows.
+import { dirname, join } from "node:path/posix";
 
 export const WSLG_PULSE_SERVER = "/mnt/wslg/PulseServer";
 export const WSL_APT_COMMAND = "sudo apt install pipewire pipewire-bin wireplumber pulseaudio-utils";
